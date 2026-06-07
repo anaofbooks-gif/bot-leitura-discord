@@ -179,6 +179,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"Dá-me Uma Razão - AL Jackson\"",
+      "autor": "AL Jackson\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -204,7 +214,7 @@
     "A": "\"A Lua e a Maré - Lyla Sage\"",
     "B": "❌ Vazio",
     "C": "❌ Vazio",
-    "D": "❌ Vazio",
+    "D": "\"Dá-me Uma Razão - AL Jackson\"",
     "E": "❌ Vazio",
     "F": "\"Full Measures - Rebecca Yarros\"",
     "G": "\"Great and Precious Things - Rebecca Yarros\"",
