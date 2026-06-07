@@ -29,6 +29,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"A Lua e a Maré - Lyla Sage\"",
+      "autor": "Lyla Sage\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -51,7 +61,7 @@
     "Dezembro": []
   },
   "desafio_alfabeto": {
-    "A": "❌ Vazio",
+    "A": "\"A Lua e a Maré - Lyla Sage\"",
     "B": "❌ Vazio",
     "C": "❌ Vazio",
     "D": "❌ Vazio",
