@@ -49,6 +49,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"Variation - Rebecca Yarros\"",
+      "autor": "Rebecca Yarros\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -92,7 +102,7 @@
     "S": "❌ Vazio",
     "T": "\"The Last Letter - Rebecca Yarros\"",
     "U": "❌ Vazio",
-    "V": "❌ Vazio",
+    "V": "\"Variation - Rebecca Yarros\"",
     "W": "❌ Vazio",
     "X": "❌ Vazio",
     "Y": "❌ Vazio",
