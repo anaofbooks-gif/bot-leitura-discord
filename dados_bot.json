@@ -169,6 +169,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"Full Measures - Rebecca Yarros\"",
+      "autor": "Rebecca Yarros\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -196,7 +206,7 @@
     "C": "❌ Vazio",
     "D": "❌ Vazio",
     "E": "❌ Vazio",
-    "F": "❌ Vazio",
+    "F": "\"Full Measures - Rebecca Yarros\"",
     "G": "\"Great and Precious Things - Rebecca Yarros\"",
     "H": "\"His & Hers - Alice Feeney\"",
     "I": "\"In Her Own League - Liz Tomforde\"",
