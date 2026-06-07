@@ -244,7 +244,11 @@
       "tipo": "lc"
     }
   ],
-  "sugestoes_vistas": [],
+  "sugestoes_vistas": [
+    "Ugly Love - Colleen Hoover",
+    "It Happened One Summer - Tessa Bailey",
+    "The House in the Cerulean Sea - T.J. Klune"
+  ],
   "sorteios_mes": {},
   "tbr_por_mes": {
     "Geral": [
