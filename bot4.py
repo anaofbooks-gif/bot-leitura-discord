@@ -834,8 +834,7 @@ def desenhar_calendario_leituras(mes: str, ano: int) -> io.BytesIO:
     largura, altura = 1400, 1000
     margem = 60
     topo = 150
-    largura_celula = (largura - margem * 2) // 7
-    altura_celula = 115
+    largura_celula = (largura - margem * 2) // 7    altura_celula = 115
 
     imagem = Image.new("RGB", (largura, altura), "#fff8f1")
     draw = ImageDraw.Draw(imagem)
@@ -1057,6 +1056,57 @@ async def garantir_canal(guild: discord.Guild, nome: str) -> discord.TextChannel
     return await guild.create_text_channel(nome)
 
 
+# ==============================================================================
+# DESAFIO A-Z CORRIGIDO
+# ==============================================================================
+
+ARTIGOS_BANIDOS = {
+    # Português Europeu
+    "o", "a", "os", "as", "um", "uma", "uns", "umas",
+    # Inglês
+    "the", "a", "an"
+}
+
+
+def analisar_titulo_alfabeto(titulo: str):
+    """
+    Analisa o título para o desafio A-Z.
+    Remove artigos definidos (pt-PT ou inglês) e pega na primeira letra da primeira palavra significativa.
+    """
+    titulo_limpo = titulo.strip()
+    
+    if not titulo_limpo:
+        return {"status": "INVALIDO", "letra": None}
+    
+    # Separar por espaços e pontuação comum
+    palavras = re.split(r'[\s\-–—]+', titulo_limpo)
+    
+    # Encontrar a primeira palavra que não é artigo
+    primeira_palavra = None
+    for palavra in palavras:
+        palavra_limpa = palavra.lower().strip('.,!?;:\'"()[]{}')
+        if palavra_limpa and palavra_limpa not in ARTIGOS_BANIDOS:
+            primeira_palavra = palavra
+            break
+    
+    if not primeira_palavra:
+        # Se todas as palavras são artigos, tenta a primeira não vazia
+        for palavra in palavras:
+            if palavra.strip('.,!?;:\'"()[]{}'):
+                primeira_palavra = palavra
+                break
+    
+    if not primeira_palavra:
+        return {"status": "INVALIDO", "letra": None}
+    
+    # Encontrar a primeira letra da primeira palavra
+    for ch in primeira_palavra:
+        if ch.isalpha():
+            return {"status": "OK", "letra": ch.upper()}
+    
+    return {"status": "INVALIDO", "letra": None}
+
+
 dados = carregar_dados()
 _ultimo_snapshot = _snapshot_dados()
 if modo_armazenamento() == "local" and not DATA_FILE.exists():
@@ -1153,6 +1203,8 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
             "lido": "`!lido Nome do Livro`",
             "remalfabeto": "`!remalfabeto A`",
             "avaliar": "`!avaliar 3.5` (aceita 0.25 em 0.25 até 5)",
+            "reavaliar": '`!reavaliar "Título - Autor" 4.5`',
+            "editarautor": '`!editarautor "Título - Autor Antigo" "Autor Correto"`',
             "editmeta": '`!editmeta "Título - Autor" dia 7 até cap. 10`',
             "livroinfo": "`!livroinfo Título - Autor`",
             "resumomes": "`!resumomes Junho`",
@@ -1237,7 +1289,7 @@ class BotaoMarcarSugestoes(discord.ui.Button):
         self.label = "✅ Sugestões arquivadas"
         await interaction.response.edit_message(view=self.view)
         await interaction.followup.send(
-            f"📚 Arquivei **{novos}** sugestão(ões). Não voltarão a ser recomendadas.",
+            f"📚 Arquivou **{novos}** sugestão(ões). Não voltarão a ser recomendadas.",
             ephemeral=True,
         )
 
@@ -1319,7 +1371,7 @@ class ViewAvaliacao(discord.ui.View):
 
 
 # ==============================================================================
-# COMANDO: GUIA
+# COMANDO: GUIA (ATUALIZADO)
 # ==============================================================================
 
 @bot.command(name="dadosficheiro", help="Mostra onde os dados do bot são guardados.")
@@ -1420,6 +1472,10 @@ async def enviar_guia(ctx: commands.Context):
             f"• `{p}lido \"Quarta Asa - Rebecca Yarros\"`\n\n"
             f"`{p}avaliar` — Avalia o último livro lido (0.25 em 0.25).\n"
             f"• `{p}avaliar 4.5` · `{p}avaliar 3.75`\n\n"
+            f"`{p}reavaliar` — Reavalia um livro já lido.\n"
+            f"• `{p}reavaliar \"Quarta Asa - Rebecca Yarros\" 4.5`\n\n"
+            f"`{p}editarautor` — Corrige o nome do autor de um livro.\n"
+            f"• `{p}editarautor \"Quarta Asa - Rebecca\" \"Rebecca Yarros\"`\n\n"
             f"`{p}desafios` — Painel geral: meta anual, A-Z, avaliações e TBR.\n"
             f"`{p}alfabeto` — Progresso do desafio A-Z.\n"
             f"`{p}remalfabeto` — Limpa uma letra do A-Z. · `{p}remalfabeto Q`\n"
@@ -1468,7 +1524,8 @@ async def enviar_guia(ctx: commands.Context):
             f"• `{p}entrevista Rhysanda O que pensas da Feyre?`\n\n"
             f"`{p}ressaca` — Sugestões para ressaca literária.\n"
             f"`{p}teoria` — Reage à tua teoria sem spoilers.\n"
-            f"`{p}sprint` — Sprint de leitura com temporizador. · `{p}sprint 25`"
+            f"`{p}sprint` — Sprint de leitura com temporizador. · `{p}sprint 25`\n\n"
+            f"`{p}autores` — Lista todos os autores registados."
         ),
         inline=False,
     )
@@ -2108,24 +2165,6 @@ async def calendario_leituras_conjuntas(ctx: commands.Context, mes: Optional[str
 # LIDOS / A-Z / HISTÓRICO
 # ==============================================================================
 
-ARTIGOS_BANIDOS = {"o", "a", "os", "as", "the"}
-
-def analisar_titulo_alfabeto(titulo: str):
-    titulo_limpo = titulo.strip()
-
-    if not titulo_limpo:
-        return {"status": "INVALIDO", "letra": None}
-
-    palavras = titulo_limpo.split()
-    if palavras and palavras[0].lower() in ARTIGOS_BANIDOS:
-        return {"status": "BANIDO", "letra": None}
-
-    for ch in titulo_limpo:
-        if ch.isalpha():
-            return {"status": "OK", "letra": ch.upper()}
-
-    return {"status": "INVALIDO", "letra": None}
-
 @bot.command(name="lido", help='Regista um livro como lido. Formato: "Título - Autor".')
 async def livro_lido(ctx: commands.Context, *, titulo_livro: str):
     try:
@@ -2295,6 +2334,7 @@ async def remover_do_alfabeto(ctx: commands.Context, letra: str):
         f"Progresso atual do A-Z: **{preenchidas}/26**."
     )
 
+
 @bot.command(name="avaliar", help="Avalia o último livro lido (0.25 a 5, de 0.25 em 0.25).")
 async def avaliar_livro(ctx: commands.Context, nota: float):
     if not dados["livros_lidos"]:
@@ -2307,6 +2347,224 @@ async def avaliar_livro(ctx: commands.Context, nota: float):
     dados["livros_lidos"][-1]["estrelas"] = estrelas_para_texto(nota)
     guardar_dados()
     await ctx.send(f"🎨 Avaliação guardada com sucesso: {dados['livros_lidos'][-1]['estrelas']}")
+
+
+# ==============================================================================
+# NOVO COMANDO: REAVALIAR
+# ==============================================================================
+
+@bot.command(name="reavaliar", help="Reavalia um livro já lido. Ex: !reavaliar \"Título - Autor\" 4.5")
+async def reavaliar_livro(ctx: commands.Context, *, argumentos: str):
+    """
+    Permite reavaliar um livro já registado como lido.
+    Uso: !reavaliar "Título - Autor" 4.5
+    Ou: !reavaliar Título - Autor 4.5
+    """
+    # Tentar extrair título e nota
+    partes = argumentos.rsplit(' ', 1)
+    
+    if len(partes) < 2:
+        return await ctx.send(
+            "❌ Uso correto: `!reavaliar \"Título - Autor\" 4.5`\n"
+            "A nota deve ser entre 0.25 e 5, em passos de 0.25."
+        )
+    
+    titulo_candidato = partes[0].strip()
+    try:
+        nota = float(partes[1].strip())
+    except ValueError:
+        return await ctx.send("❌ Nota inválida. Exemplo: `4.5` ou `3.75`")
+    
+    if not nota_valida(nota):
+        return await ctx.send("❌ A nota deve ser entre 0.25 e 5, em passos de 0.25.")
+    
+    # Tentar encontrar o livro no histórico
+    titulo_alvo = titulo_candidato.lower().strip()
+    livro_encontrado = None
+    
+    for livro in dados["livros_lidos"]:
+        titulo_livro = livro.get("titulo", "").lower().strip()
+        if titulo_livro == titulo_alvo:
+            livro_encontrado = livro
+            break
+    
+    if not livro_encontrado:
+        # Tentar com separador se o utilizador não usou o formato completo
+        for livro in dados["livros_lidos"]:
+            titulo_livro = livro.get("titulo", "").lower().strip()
+            if titulo_livro.startswith(titulo_alvo) or titulo_alvo.startswith(titulo_livro):
+                livro_encontrado = livro
+                break
+    
+    if not livro_encontrado:
+        # Mostrar sugestões de livros parecidos
+        sugestoes = []
+        for livro in dados["livros_lidos"][-5:]:  # últimos 5 livros
+            sugestoes.append(f"• {livro.get('titulo', 'Desconhecido')}")
+        
+        sugestoes_texto = "\n".join(sugestoes) if sugestoes else "Nenhum livro encontrado no histórico."
+        return await ctx.send(
+            f"❌ Não encontrei o livro **{titulo_candidato}** no teu histórico.\n\n"
+            f"**Últimos livros lidos:**\n{sugestoes_texto}\n\n"
+            f"Usa o nome exato como aparece em `!historico`."
+        )
+    
+    nota_antiga = livro_encontrado.get("nota", 0.0)
+    estrelas_antigas = livro_encontrado.get("estrelas", "Sem avaliação")
+    
+    # Atualizar avaliação
+    livro_encontrado["nota"] = nota
+    livro_encontrado["estrelas"] = estrelas_para_texto(nota)
+    guardar_dados()
+    
+    await ctx.send(
+        f"🔄 **Avaliação atualizada!**\n"
+        f"📖 {livro_encontrado.get('titulo', 'Livro')}\n"
+        f"⭐ Antiga: {estrelas_antigas} → ⭐ Nova: {livro_encontrado['estrelas']}"
+    )
+
+
+# ==============================================================================
+# NOVO COMANDO: EDITAR AUTOR
+# ==============================================================================
+
+@bot.command(name="editarautor", help="Corrige o nome do autor de um livro. Ex: !editarautor \"Título - AutorErrado\" \"AutorCerto\"")
+async def editar_autor_livro(ctx: commands.Context, *, argumentos: str):
+    """
+    Permite corrigir o nome do autor de um livro já registado.
+    Uso: !editarautor "Título - AutorAntigo" "AutorNovo"
+    """
+    # Tentar extrair título completo e novo autor
+    # Formato: "Título - AutorAntigo" "AutorNovo"
+    padrao = r'"([^"]+)"\s+"([^"]+)"'
+    match = re.match(padrao, argumentos)
+    
+    if not match:
+        return await ctx.send(
+            "❌ Uso correto: `!editarautor \"Título - Autor Antigo\" \"Autor Correto\"`\n"
+            "Exemplo: `!editarautor \"Quarta Asa - Rebecca\" \"Rebecca Yarros\"`"
+        )
+    
+    titulo_completo_antigo = match.group(1).strip()
+    novo_autor = match.group(2).strip()
+    
+    if not novo_autor:
+        return await ctx.send("❌ O novo autor não pode ficar vazio.")
+    
+    # Encontrar o livro no histórico
+    livro_encontrado = None
+    titulo_alvo = titulo_completo_antigo.lower().strip()
+    
+    for livro in dados["livros_lidos"]:
+        if livro.get("titulo", "").lower().strip() == titulo_alvo:
+            livro_encontrado = livro
+            break
+    
+    if not livro_encontrado:
+        # Tentar encontrar por correspondência parcial
+        for livro in dados["livros_lidos"]:
+            titulo_livro = livro.get("titulo", "").lower().strip()
+            if titulo_livro.startswith(titulo_alvo) or titulo_alvo.startswith(titulo_livro):
+                livro_encontrado = livro
+                break
+    
+    if not livro_encontrado:
+        sugestoes = []
+        for livro in dados["livros_lidos"][-5:]:
+            sugestoes.append(f"• {livro.get('titulo', 'Desconhecido')}")
+        sugestoes_texto = "\n".join(sugestoes) if sugestoes else "Nenhum livro encontrado."
+        return await ctx.send(
+            f"❌ Não encontrei o livro **{titulo_completo_antigo}** no histórico.\n\n"
+            f"**Últimos livros lidos:**\n{sugestoes_texto}"
+        )
+    
+    titulo_antigo = livro_encontrado.get("titulo", "")
+    autor_antigo = livro_encontrado.get("autor", "")
+    
+    # Construir novo título no formato "Título - Novo Autor"
+    try:
+        titulo_curto, _ = parsear_livro(titulo_antigo)
+        novo_titulo_completo = formatar_livro(titulo_curto, novo_autor)
+    except ValueError:
+        # Se não conseguir parsear, usa o título original sem autor
+        partes_titulo = titulo_antigo.split(SEPARADOR_LIVRO)
+        titulo_curto = partes_titulo[0] if partes_titulo else titulo_antigo
+        novo_titulo_completo = f"{titulo_curto}{SEPARADOR_LIVRO}{novo_autor}"
+    
+    # Atualizar o livro
+    livro_encontrado["titulo"] = novo_titulo_completo
+    livro_encontrado["autor"] = novo_autor
+    
+    # Também atualizar no desafio A-Z se o livro estiver lá
+    for letra, livro_alfabeto in dados["desafio_alfabeto"].items():
+        if livro_alfabeto == titulo_antigo:
+            dados["desafio_alfabeto"][letra] = novo_titulo_completo
+            break
+    
+    # Atualizar nas TBRs
+    for categoria, lista in dados["tbr_por_mes"].items():
+        for i, item in enumerate(lista):
+            if item == titulo_antigo:
+                lista[i] = novo_titulo_completo
+    
+    # Atualizar nos lembretes/metas
+    for lembrete in dados["lembretes_metas"]:
+        if lembrete.get("livro") == titulo_antigo:
+            lembrete["livro"] = novo_titulo_completo
+            if lembrete.get("autor") == autor_antigo:
+                lembrete["autor"] = novo_autor
+    
+    # Atualizar nos sorteios
+    for mes, info in dados["sorteios_mes"].items():
+        livros = info.get("livros", [])
+        for i, livro in enumerate(livros):
+            if livro == titulo_antigo:
+                livros[i] = novo_titulo_completo
+        lidos = info.get("lidos", [])
+        for i, livro in enumerate(lidos):
+            if livro == titulo_antigo:
+                lidos[i] = novo_titulo_completo
+    
+    guardar_dados()
+    
+    await ctx.send(
+        f"✏️ **Autor corrigido com sucesso!**\n"
+        f"📖 Título: {titulo_curto}\n"
+        f"👤 Antigo autor: {autor_antigo}\n"
+        f"👤 Novo autor: {novo_autor}\n\n"
+        f"✅ O livro foi atualizado em todo o sistema (histórico, TBR, desafios, sorteios e lembretes)."
+    )
+
+
+# ==============================================================================
+# NOVO COMANDO: AUTORES
+# ==============================================================================
+
+@bot.command(name="autores", help="Lista todos os autores dos livros lidos.")
+async def listar_autores(ctx: commands.Context):
+    """Lista todos os autores únicos dos livros lidos."""
+    autores = set()
+    for livro in dados["livros_lidos"]:
+        autor = livro.get("autor", "")
+        if autor:
+            autores.add(autor)
+        else:
+            # Tentar extrair do título
+            try:
+                _, autor = parsear_livro(livro.get("titulo", ""))
+                autores.add(autor)
+            except ValueError:
+                pass
+    
+    if not autores:
+        return await ctx.send("📭 Ainda não tens autores registados.")
+    
+    autores_ordenados = sorted(autores)
+    msg = f"📚 **Autores registados ({len(autores_ordenados)}):**\n"
+    msg += "\n".join(f"• {autor}" for autor in autores_ordenados)
+    
+    await enviar_mensagem_longa(ctx, msg)
+
 
 @bot.command(name="remlido")
 async def remover_lido(ctx: commands.Context, *, titulo_livro: str):
@@ -2339,6 +2597,7 @@ async def remover_lido(ctx: commands.Context, *, titulo_livro: str):
     await ctx.send(
         f"🗑️ Livro removido: **{titulo_encontrado}**{aviso_alfabeto}"
     )
+
 
 @bot.command(name="historico", help="Mostra o histórico de leituras.")
 async def mostrar_historico(ctx: commands.Context):
