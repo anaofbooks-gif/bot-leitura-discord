@@ -109,6 +109,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"Lightlark - Alex Aster\"",
+      "autor": "Alex Aster\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "Open Library"
     }
   ],
   "review_em_andamento": {},
@@ -142,7 +152,7 @@
     "I": "\"In Her Own League - Liz Tomforde\"",
     "J": "❌ Vazio",
     "K": "❌ Vazio",
-    "L": "❌ Vazio",
+    "L": "\"Lightlark - Alex Aster\"",
     "M": "❌ Vazio",
     "N": "\"Não Devia Ser Assim - Amy Lea\"",
     "O": "❌ Vazio",
