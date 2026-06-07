@@ -1,5 +1,16 @@
 {
-  "livros_lidos": [],
+  "livros_lidos": [
+    {
+      "titulo": "\"His & Hers - Alice Feeney\"",
+      "autor": "Alice Feeney\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
+    }
+  ],
   "review_em_andamento": {},
   "lembretes_metas": [],
   "sugestoes_vistas": [],
@@ -27,7 +38,7 @@
     "E": "❌ Vazio",
     "F": "❌ Vazio",
     "G": "❌ Vazio",
-    "H": "❌ Vazio",
+    "H": "\"His & Hers - Alice Feeney\"",
     "I": "❌ Vazio",
     "J": "❌ Vazio",
     "K": "❌ Vazio",
