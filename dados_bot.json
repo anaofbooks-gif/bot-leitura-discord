@@ -69,6 +69,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"Great and Precious Things - Rebecca Yarros\"",
+      "autor": "Rebecca Yarros\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -97,7 +107,7 @@
     "D": "❌ Vazio",
     "E": "❌ Vazio",
     "F": "❌ Vazio",
-    "G": "❌ Vazio",
+    "G": "\"Great and Precious Things - Rebecca Yarros\"",
     "H": "\"His & Hers - Alice Feeney\"",
     "I": "\"In Her Own League - Liz Tomforde\"",
     "J": "❌ Vazio",
