@@ -19,6 +19,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"The Last Letter - Rebecca Yarros\"",
+      "autor": "Rebecca Yarros\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -60,7 +70,7 @@
     "Q": "❌ Vazio",
     "R": "❌ Vazio",
     "S": "❌ Vazio",
-    "T": "❌ Vazio",
+    "T": "\"The Last Letter - Rebecca Yarros\"",
     "U": "❌ Vazio",
     "V": "❌ Vazio",
     "W": "❌ Vazio",
