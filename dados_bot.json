@@ -222,6 +222,26 @@
       "thread_id": 1513319549024604341,
       "avisado": false,
       "tipo": "lc"
+    },
+    {
+      "data": "10/06/2026",
+      "livro": "A Filha Perfeita - Lucinda Berry",
+      "autor": "Lucinda Berry",
+      "meta": "Até Capítulo 29",
+      "canal_id": 1513321825592152064,
+      "thread_id": 1513321825592152064,
+      "avisado": false,
+      "tipo": "lc"
+    },
+    {
+      "data": "14/06/2026",
+      "livro": "A Filha Perfeita - Lucinda Berry",
+      "autor": "Lucinda Berry",
+      "meta": "Terminar o livro",
+      "canal_id": 1513321825592152064,
+      "thread_id": 1513321825592152064,
+      "avisado": false,
+      "tipo": "lc"
     }
   ],
   "sugestoes_vistas": [],
