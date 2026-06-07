@@ -1916,14 +1916,8 @@ Respond only in JSON:
 
     try:
         resposta = gemini_json(prompt)
-        calendario = resposta.get(
-            "calendario_visual",
-            resposta.get("tabela_markdown", "Sem calendário disponível.")
-        )
         metas = resposta.get("metas", [])
         nota = resposta.get("nota", "")
-
-        await enviar_mensagem_longa(topico_livro, f"🗓️ **CALENDÁRIO VISUAL DE METAS**\n\n{calendario}")
 
         if nota:
             await enviar_mensagem_longa(topico_livro, f"ℹ️ {nota}")
@@ -2096,15 +2090,12 @@ JSON only:
 
     try:
         resposta = gemini_json(prompt)
-        calendario = resposta.get("calendario_visual", "Sem calendário disponível.")
         metas = resposta.get("metas", [])
         nota = resposta.get("nota", "")
 
         canal = await obter_canal_discord(int(canal_id)) if canal_id else ctx.channel
-        if canal:
-            await enviar_mensagem_longa(canal, f"🗓️ **CALENDÁRIO ATUALIZADO**\n\n{calendario}")
-            if nota:
-                await enviar_mensagem_longa(canal, f"ℹ️ {nota}")
+        if canal and nota:
+            await enviar_mensagem_longa(canal, f"ℹ️ {nota}")
 
         criados = 0
         for m in metas:
