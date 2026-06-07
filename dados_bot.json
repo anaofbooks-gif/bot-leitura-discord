@@ -192,7 +192,28 @@
     }
   ],
   "review_em_andamento": {},
-  "lembretes_metas": [],
+  "lembretes_metas": [
+    {
+      "data": "06/06/2026",
+      "livro": "Castelo de Cartas - Anabela Lopes",
+      "autor": "Anabela Lopes",
+      "meta": "Ler até ao capítulo 29 de \"Castelo de Cartas - Anabela Lopes\".",
+      "canal_id": 1513318927420358737,
+      "thread_id": 1513318927420358737,
+      "avisado": false,
+      "tipo": "lc"
+    },
+    {
+      "data": "13/06/2026",
+      "livro": "Castelo de Cartas - Anabela Lopes",
+      "autor": "Anabela Lopes",
+      "meta": "Terminar a leitura de \"Castelo de Cartas - Anabela Lopes\".",
+      "canal_id": 1513318927420358737,
+      "thread_id": 1513318927420358737,
+      "avisado": false,
+      "tipo": "lc"
+    }
+  ],
   "sugestoes_vistas": [],
   "sorteios_mes": {},
   "tbr_por_mes": {
