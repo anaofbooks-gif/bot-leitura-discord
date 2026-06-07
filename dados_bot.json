@@ -149,6 +149,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"Obsession Falls - Claire Kingsley\"",
+      "autor": "Claire Kingsley\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -185,7 +195,7 @@
     "L": "\"Lightlark - Alex Aster\"",
     "M": "\"Marcado a Ferro - Bailey Hannah\"",
     "N": "\"Não Devia Ser Assim - Amy Lea\"",
-    "O": "❌ Vazio",
+    "O": "\"Obsession Falls - Claire Kingsley\"",
     "P": "❌ Vazio",
     "Q": "❌ Vazio",
     "R": "❌ Vazio",
