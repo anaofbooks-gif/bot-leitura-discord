@@ -3,15 +3,21 @@ import json
 import random
 import asyncio
 import re
+import shutil
+import threading
 import unicodedata
 import calendar
 import io
 import textwrap
+import atexit
+import base64
 from collections import Counter
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 import aiohttp
 import discord
@@ -34,7 +40,25 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 COMMAND_PREFIX = os.getenv("PREFIX", "!")
-DATA_FILE = Path(__file__).with_name("dados_bot.json")
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_DATA_DIR = Path(os.getenv("BOT_DATA_DIR", _SCRIPT_DIR)).expanduser().resolve()
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATA_FILE = Path(os.getenv("BOT_DATA_FILE", _DATA_DIR / "dados_bot.json")).expanduser().resolve()
+BACKUP_FILE = DATA_FILE.with_name(f"{DATA_FILE.stem}.backup.json")
+_dados_lock = threading.Lock()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+JSONBIN_BIN_ID = os.getenv("JSONBIN_BIN_ID", "")
+JSONBIN_API_KEY = os.getenv("JSONBIN_API_KEY", "")
+BOT_DATA_URL = os.getenv("BOT_DATA_URL", "")
+BOT_DATA_SAVE_URL = os.getenv("BOT_DATA_SAVE_URL", BOT_DATA_URL)
+BOT_DATA_TOKEN = os.getenv("BOT_DATA_TOKEN", "")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_REPO = os.getenv("GITHUB_REPO", os.getenv("GITHUB_REPOSITORY", ""))
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+GITHUB_DATA_PATH = os.getenv("GITHUB_DATA_PATH", "dados_bot.json")
+_github_file_sha: Optional[str] = None
+_ultimo_snapshot: Optional[str] = None
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 VAZIO_ALFABETO = "❌ Vazio"
 
@@ -76,36 +100,357 @@ def estado_inicial() -> Dict[str, Any]:
     }
 
 
-def carregar_dados() -> Dict[str, Any]:
-    if DATA_FILE.exists():
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                dados = json.load(f)
-            if not isinstance(dados, dict):
-                return estado_inicial()
-            base = estado_inicial()
-            base.update(dados)
-            base["tbr_por_mes"] = {
-                **estado_inicial()["tbr_por_mes"],
-                **dados.get("tbr_por_mes", {}),
-            }
-            base["desafio_alfabeto"] = {
-                **estado_inicial()["desafio_alfabeto"],
-                **dados.get("desafio_alfabeto", {}),
-            }
-            base["sugestoes_vistas"] = dados.get("sugestoes_vistas", [])
-            base["sorteios_mes"] = dados.get("sorteios_mes", {})
-            base["livros_lidos"] = migrar_livros_lidos(dados.get("livros_lidos", []))
-            base["lembretes_metas"] = dados.get("lembretes_metas", [])
-            return base
-        except (OSError, json.JSONDecodeError):
+def normalizar_tbr_por_mes(tbr: Any) -> Dict[str, List[str]]:
+    base = estado_inicial()["tbr_por_mes"]
+    if not isinstance(tbr, dict):
+        return {mes: list(livros) for mes, livros in base.items()}
+
+    resultado = {mes: list(base[mes]) for mes in base}
+    for mes, livros in tbr.items():
+        if mes not in resultado:
+            continue
+        if isinstance(livros, list):
+            resultado[mes] = [str(livro) for livro in livros if str(livro).strip()]
+        else:
+            resultado[mes] = []
+    return resultado
+
+
+def aplicar_dados_carregados(bruto: Dict[str, Any]) -> Dict[str, Any]:
+    base = estado_inicial()
+    base.update(bruto)
+    base["tbr_por_mes"] = normalizar_tbr_por_mes(bruto.get("tbr_por_mes"))
+    base["desafio_alfabeto"] = {
+        **estado_inicial()["desafio_alfabeto"],
+        **(bruto.get("desafio_alfabeto") if isinstance(bruto.get("desafio_alfabeto"), dict) else {}),
+    }
+    base["sugestoes_vistas"] = list(bruto.get("sugestoes_vistas", []))
+    base["sorteios_mes"] = dict(bruto.get("sorteios_mes", {}))
+    base["livros_lidos"] = migrar_livros_lidos(bruto.get("livros_lidos", []))
+    base["lembretes_metas"] = list(bruto.get("lembretes_metas", []))
+    base["review_em_andamento"] = dict(bruto.get("review_em_andamento", {}))
+    return base
+
+
+def _ler_ficheiro_dados(ficheiro: Path) -> Dict[str, Any]:
+    with open(ficheiro, "r", encoding="utf-8") as f:
+        bruto = json.load(f)
+    if not isinstance(bruto, dict):
+        raise ValueError("Formato inválido")
+    return aplicar_dados_carregados(bruto)
+
+
+def em_nuvem() -> bool:
+    return any(
+        os.getenv(var)
+        for var in ("RENDER", "RAILWAY_ENVIRONMENT", "DYNO", "FLY_APP_NAME", "K_SERVICE", "VERCEL")
+    )
+
+
+def modo_armazenamento() -> str:
+    if GITHUB_TOKEN and GITHUB_REPO:
+        return "github"
+    if SUPABASE_URL and SUPABASE_KEY:
+        return "supabase"
+    if JSONBIN_BIN_ID and JSONBIN_API_KEY:
+        return "jsonbin"
+    if BOT_DATA_URL:
+        return "url"
+    return "local"
+
+
+def _snapshot_dados() -> str:
+    return json.dumps(dados, sort_keys=True, ensure_ascii=False)
+
+
+def _github_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _parse_github_repo() -> Tuple[str, str]:
+    repo = GITHUB_REPO.strip()
+    if "/" not in repo:
+        raise ValueError("GITHUB_REPO deve estar no formato owner/repo")
+    owner, nome = repo.split("/", 1)
+    return owner.strip(), nome.strip()
+
+
+def carregar_github() -> Dict[str, Any]:
+    global _github_file_sha
+    owner, repo = _parse_github_repo()
+    url = (
+        f"https://api.github.com/repos/{owner}/{repo}/contents/"
+        f"{quote(GITHUB_DATA_PATH)}?ref={quote(GITHUB_BRANCH)}"
+    )
+    try:
+        payload = _pedido_http("GET", url, cabecalhos=_github_headers())
+    except urlerror.HTTPError as erro:
+        if erro.code == 404:
+            _github_file_sha = None
             return estado_inicial()
+        raise
+
+    if not isinstance(payload, dict):
+        return estado_inicial()
+
+    _github_file_sha = payload.get("sha")
+    conteudo_b64 = str(payload.get("content", "")).replace("\n", "")
+    if not conteudo_b64:
+        return estado_inicial()
+
+    bruto = json.loads(base64.b64decode(conteudo_b64).decode("utf-8"))
+    if not isinstance(bruto, dict):
+        return estado_inicial()
+    return aplicar_dados_carregados(bruto)
+
+
+def guardar_github() -> None:
+    global _github_file_sha
+    owner, repo = _parse_github_repo()
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(GITHUB_DATA_PATH)}"
+    conteudo = json.dumps(dados, ensure_ascii=False, indent=2)
+    corpo: Dict[str, Any] = {
+        "message": f"chore(bot): atualizar {GITHUB_DATA_PATH}",
+        "content": base64.b64encode(conteudo.encode("utf-8")).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+    if _github_file_sha:
+        corpo["sha"] = _github_file_sha
+
+    payload = _pedido_http("PUT", url, corpo=corpo, cabecalhos=_github_headers())
+    if isinstance(payload, dict) and isinstance(payload.get("content"), dict):
+        _github_file_sha = payload["content"].get("sha", _github_file_sha)
+
+
+def _pedido_http(
+    metodo: str,
+    url: str,
+    corpo: Optional[Dict[str, Any]] = None,
+    cabecalhos: Optional[Dict[str, str]] = None,
+    timeout: int = 20,
+) -> Any:
+    cabecalhos = cabecalhos or {}
+    dados_bytes = None
+    if corpo is not None:
+        dados_bytes = json.dumps(corpo).encode("utf-8")
+        cabecalhos.setdefault("Content-Type", "application/json")
+
+    pedido = urlrequest.Request(url, data=dados_bytes, headers=cabecalhos, method=metodo)
+    with urlrequest.urlopen(pedido, timeout=timeout) as resposta:
+        texto = resposta.read().decode("utf-8")
+        if not texto.strip():
+            return None
+        return json.loads(texto)
+
+
+def carregar_supabase() -> Dict[str, Any]:
+    url = f"{SUPABASE_URL}/rest/v1/bot_state?id=eq.1&select=data"
+    cabecalhos = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    payload = _pedido_http("GET", url, cabecalhos=cabecalhos)
+    if not payload:
+        return estado_inicial()
+    if isinstance(payload, list) and payload:
+        bruto = payload[0].get("data", {})
+    elif isinstance(payload, dict):
+        bruto = payload.get("data", payload)
+    else:
+        return estado_inicial()
+    if not isinstance(bruto, dict):
+        return estado_inicial()
+    return aplicar_dados_carregados(bruto)
+
+
+def guardar_supabase() -> None:
+    url = f"{SUPABASE_URL}/rest/v1/bot_state?id=eq.1"
+    cabecalhos = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Prefer": "return=minimal",
+    }
+    try:
+        _pedido_http("PATCH", url, corpo={"data": dados}, cabecalhos=cabecalhos)
+    except urlerror.HTTPError as erro:
+        if erro.code != 404:
+            raise
+        criar_url = f"{SUPABASE_URL}/rest/v1/bot_state"
+        cabecalhos["Prefer"] = "resolution=merge-duplicates"
+        _pedido_http("POST", criar_url, corpo={"id": 1, "data": dados}, cabecalhos=cabecalhos)
+
+
+def carregar_jsonbin() -> Dict[str, Any]:
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
+    cabecalhos = {"X-Master-Key": JSONBIN_API_KEY}
+    payload = _pedido_http("GET", url, cabecalhos=cabecalhos)
+    if not isinstance(payload, dict):
+        return estado_inicial()
+    bruto = payload.get("record", payload)
+    if not isinstance(bruto, dict):
+        return estado_inicial()
+    return aplicar_dados_carregados(bruto)
+
+
+def guardar_jsonbin() -> None:
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
+    cabecalhos = {
+        "X-Master-Key": JSONBIN_API_KEY,
+        "Content-Type": "application/json",
+    }
+    _pedido_http("PUT", url, corpo=dados, cabecalhos=cabecalhos)
+
+
+def carregar_url() -> Dict[str, Any]:
+    cabecalhos = {}
+    if BOT_DATA_TOKEN:
+        cabecalhos["Authorization"] = f"Bearer {BOT_DATA_TOKEN}"
+    payload = _pedido_http("GET", BOT_DATA_URL, cabecalhos=cabecalhos)
+    if not isinstance(payload, dict):
+        return estado_inicial()
+    return aplicar_dados_carregados(payload)
+
+
+def guardar_url() -> None:
+    cabecalhos = {}
+    if BOT_DATA_TOKEN:
+        cabecalhos["Authorization"] = f"Bearer {BOT_DATA_TOKEN}"
+    _pedido_http("PUT", BOT_DATA_SAVE_URL, corpo=dados, cabecalhos=cabecalhos)
+
+
+def _guardar_local() -> None:
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp = DATA_FILE.with_suffix(".tmp.json")
+    conteudo = json.dumps(dados, ensure_ascii=False, indent=2)
+    temp.write_text(conteudo, encoding="utf-8")
+    if DATA_FILE.exists():
+        shutil.copy2(DATA_FILE, BACKUP_FILE)
+    temp.replace(DATA_FILE)
+
+
+def carregar_dados() -> Dict[str, Any]:
+    modo = modo_armazenamento()
+
+    if modo == "github":
+        try:
+            estado = carregar_github()
+            print(f"🐙 Dados carregados do GitHub: {GITHUB_REPO}/{GITHUB_DATA_PATH}")
+            return estado
+        except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
+            print(f"⚠️ Falha GitHub, a tentar local: {erro}")
+    elif modo == "supabase":
+        try:
+            estado = carregar_supabase()
+            print("☁️ Dados carregados do Supabase.")
+            return estado
+        except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
+            print(f"⚠️ Falha Supabase, a tentar local: {erro}")
+    elif modo == "jsonbin":
+        try:
+            estado = carregar_jsonbin()
+            print("☁️ Dados carregados do JSONBin.")
+            return estado
+        except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
+            print(f"⚠️ Falha JSONBin, a tentar local: {erro}")
+    elif modo == "url":
+        try:
+            estado = carregar_url()
+            print(f"☁️ Dados carregados de: {BOT_DATA_URL}")
+            return estado
+        except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
+            print(f"⚠️ Falha URL remota, a tentar local: {erro}")
+
+    for ficheiro in (DATA_FILE, BACKUP_FILE):
+        if not ficheiro.exists():
+            continue
+        try:
+            estado = _ler_ficheiro_dados(ficheiro)
+            print(f"📂 Dados carregados de: {ficheiro}")
+            return estado
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as erro:
+            print(f"⚠️ Falha ao ler {ficheiro}: {erro}")
+
+    if em_nuvem() and modo == "local":
+        print(
+            "⚠️ ATENÇÃO: Bot na nuvem sem armazenamento remoto. "
+            "A TBR perde-se a cada reinício/deploy. Configura GitHub, Supabase ou JSONBin."
+        )
+    else:
+        print(f"📂 Ficheiro novo — a criar em: {DATA_FILE}")
     return estado_inicial()
 
 
 def guardar_dados() -> None:
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(dados, f, ensure_ascii=False, indent=2)
+    global _ultimo_snapshot
+    with _dados_lock:
+        snapshot = _snapshot_dados()
+        if snapshot == _ultimo_snapshot:
+            return
+
+        modo = modo_armazenamento()
+        erro_remoto = None
+
+        if modo == "github":
+            try:
+                guardar_github()
+            except (OSError, urlerror.URLError, urlerror.HTTPError) as erro:
+                erro_remoto = erro
+        elif modo == "supabase":
+            try:
+                guardar_supabase()
+            except (OSError, urlerror.URLError, urlerror.HTTPError) as erro:
+                erro_remoto = erro
+        elif modo == "jsonbin":
+            try:
+                guardar_jsonbin()
+            except (OSError, urlerror.URLError, urlerror.HTTPError) as erro:
+                erro_remoto = erro
+        elif modo == "url":
+            try:
+                guardar_url()
+            except (OSError, urlerror.URLError, urlerror.HTTPError) as erro:
+                erro_remoto = erro
+
+        if modo == "local" or not erro_remoto:
+            try:
+                _guardar_local()
+            except OSError as erro:
+                if modo == "local":
+                    raise
+                print(f"⚠️ Cache local indisponível: {erro}")
+
+        if erro_remoto:
+            raise RuntimeError(f"Falha ao guardar no remoto ({modo}): {erro_remoto}") from erro_remoto
+
+        _ultimo_snapshot = snapshot
+
+
+def resumo_persistencia() -> str:
+    total_tbr = sum(len(v) for v in dados.get("tbr_por_mes", {}).values())
+    modo = modo_armazenamento()
+    linhas = [f"Modo: **{modo}**", f"TBR: **{total_tbr}** livros | Lidos: **{len(dados.get('livros_lidos', []))}**"]
+
+    if modo == "github":
+        linhas.append(f"Repositório: `{GITHUB_REPO}` · ficheiro `{GITHUB_DATA_PATH}` · branch `{GITHUB_BRANCH}`")
+    elif modo == "local":
+        linhas.append(f"Ficheiro local: `{DATA_FILE}`")
+        if em_nuvem():
+            linhas.append(
+                "⚠️ **Bot na nuvem com disco temporário** — os dados apagam-se ao reiniciar. "
+                "Configura **GitHub** (usa `!armazenamento`)."
+            )
+    elif modo == "supabase":
+        linhas.append(f"Remoto: `{SUPABASE_URL}` (tabela `bot_state`)")
+    elif modo == "jsonbin":
+        linhas.append(f"Remoto: JSONBin `{JSONBIN_BIN_ID}`")
+    elif modo == "url":
+        linhas.append(f"Remoto: `{BOT_DATA_URL}`")
+
+    return "\n".join(linhas)
 
 
 # ==============================================================================
@@ -193,6 +538,25 @@ def nota_valida(nota: float) -> bool:
 def livro_ja_lido(titulo_completo: str) -> bool:
     alvo = titulo_completo.lower().strip()
     return any(l.get("titulo", "").lower().strip() == alvo for l in dados["livros_lidos"])
+
+
+def nota_do_livro(livro: Dict[str, Any]) -> float:
+    nota = livro.get("nota")
+    if isinstance(nota, (int, float)) and nota > 0:
+        return float(nota)
+    return estrelas_para_nota(str(livro.get("estrelas", "")))
+
+
+def livros_bem_avaliados(minimo: float = 4.0) -> List[Dict[str, Any]]:
+    resultado = []
+    for livro in dados["livros_lidos"]:
+        titulo = str(livro.get("titulo", "")).strip()
+        if not titulo:
+            continue
+        nota = nota_do_livro(livro)
+        if nota >= minimo:
+            resultado.append({**livro, "nota": nota})
+    return resultado
 
 
 def sorteio_mes_ativo(mes: str) -> Optional[Dict[str, Any]]:
@@ -694,6 +1058,20 @@ async def garantir_canal(guild: discord.Guild, nome: str) -> discord.TextChannel
 
 
 dados = carregar_dados()
+_ultimo_snapshot = _snapshot_dados()
+if modo_armazenamento() == "local" and not DATA_FILE.exists():
+    guardar_dados()
+
+
+def _guardar_ao_sair() -> None:
+    try:
+        guardar_dados()
+        print(f"💾 Dados guardados ({modo_armazenamento()}).")
+    except OSError as erro:
+        print(f"⚠️ Erro ao guardar ao sair: {erro}")
+
+
+atexit.register(_guardar_ao_sair)
 
 
 # ==============================================================================
@@ -709,17 +1087,34 @@ class LeituraBot(commands.Bot):
         self.add_view(ViewSugestoes([], []))
         self.add_view(ViewMarcarSugestoes([]))
 
+    async def close(self) -> None:
+        guardar_dados()
+        await super().close()
+
 
 bot = LeituraBot(command_prefix=COMMAND_PREFIX, intents=intents)
+
+
+@tasks.loop(minutes=2)
+async def autosave_loop():
+    guardar_dados()
+
+
+@autosave_loop.before_loop
+async def antes_autosave():
+    await bot.wait_until_ready()
 
 
 @bot.event
 async def on_ready():
     print(f"👑 {bot.user} está online.")
+    print(f"💾 {resumo_persistencia().replace('**', '')}")
     if not verificar_lembretes_loop.is_running():
         verificar_lembretes_loop.start()
     if not resumos_automaticos_loop.is_running():
         resumos_automaticos_loop.start()
+    if not autosave_loop.is_running():
+        autosave_loop.start()
     await enviar_lembretes_pendentes_hoje()
 
 
@@ -927,40 +1322,162 @@ class ViewAvaliacao(discord.ui.View):
 # COMANDO: GUIA
 # ==============================================================================
 
+@bot.command(name="dadosficheiro", help="Mostra onde os dados do bot são guardados.")
+async def mostrar_dados_ficheiro(ctx: commands.Context):
+    await ctx.send(f"💾 **Persistência do bot**\n{resumo_persistencia()}")
+
+
+@bot.command(name="armazenamento", help="Explica como persistir dados na nuvem.")
+async def ajuda_armazenamento(ctx: commands.Context):
+    embed = discord.Embed(
+        title="☁️ Armazenamento na nuvem",
+        description=(
+            "Se o bot corre em **Render, Railway, Fly.io**, etc., o disco é **temporário** — "
+            "a TBR apaga-se a cada reinício. Usa armazenamento remoto:"
+        ),
+        color=discord.Color.blue(),
+    )
+    embed.add_field(
+        name="Opção 1 — GitHub (ideal se o bot já está no GitHub)",
+        value=(
+            "1. GitHub → Settings → Developer settings → Personal access tokens\n"
+            "2. Cria token com permissão **Contents** (read/write) no repositório\n"
+            "3. Opcional: adiciona `dados_bot.json` ao repo (pode começar vazio `{}`)\n"
+            "4. Nas variáveis da nuvem:\n"
+            "`GITHUB_TOKEN` → o token\n"
+            "`GITHUB_REPO` → `utilizador/nome-do-repo`\n"
+            "Opcional: `GITHUB_BRANCH` (default `main`), `GITHUB_DATA_PATH` (default `dados_bot.json`)"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Opção 2 — Supabase",
+        value=(
+            "1. Projeto em [supabase.com](https://supabase.com) + tabela `bot_state`\n"
+            "2. Variáveis: `SUPABASE_URL` e `SUPABASE_KEY`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Opção 3 — JSONBin",
+        value="Variáveis: `JSONBIN_BIN_ID` e `JSONBIN_API_KEY`",
+        inline=False,
+    )
+    embed.add_field(
+        name="Estado atual",
+        value=resumo_persistencia(),
+        inline=False,
+    )
+    await ctx.send(embed=embed)
+
+
 @bot.command(name="guia", help="Mostra o guia completo de comandos do bot.")
 async def enviar_guia(ctx: commands.Context):
-    embed = discord.Embed(title="📖 GUIA DO COSMO", color=discord.Color.purple())
+    p = COMMAND_PREFIX
+    embed = discord.Embed(
+        title="📖 GUIA DO COSMO",
+        description=(
+            "Bot de leituras com TBR, leituras conjuntas, desafios e Bookstagram.\n"
+            f"**Formato obrigatório dos livros:** `\"Título - Autor\"`"
+        ),
+        color=discord.Color.purple(),
+    )
     embed.add_field(
         name="📚 TBR e Planeamento",
-        value="`!addtbr`, `!remtbr`, `!verbar`, `!tbr`, `!livroinfo`",
-        inline=False
+        value=(
+            f"`{p}addtbr` — Adiciona um livro à TBR Geral ou a um mês.\n"
+            f"• `{p}addtbr \"Quarta Asa - Rebecca Yarros\"`\n"
+            f"• `{p}addtbr Junho \"Quarta Asa - Rebecca Yarros\"`\n\n"
+            f"`{p}remtbr` — Remove um livro de uma categoria da TBR.\n"
+            f"• `{p}remtbr Geral \"Quarta Asa - Rebecca Yarros\"`\n\n"
+            f"`{p}verbar` — Mostra toda a TBR organizada por mês.\n\n"
+            f"`{p}tbr` — Sorteia a TBR do mês, coloca leituras no calendário e **tranca** "
+            f"até leres todos os livros sorteados.\n"
+            f"• `{p}tbr Junho` · `{p}tbr Junho 3` (3 extras da Geral)\n\n"
+            f"`{p}livroinfo` — Pesquisa metadados (ReadMore/Open Library).\n"
+            f"• `{p}livroinfo \"Quarta Asa - Rebecca Yarros\"`"
+        ),
+        inline=False,
     )
     embed.add_field(
         name="📅 Leituras Conjuntas",
-        value='`!meta [Mês] "Título - Autor" [Cronograma]`, `!editmeta`, `!calendariolc`',
-        inline=False
+        value=(
+            f"`{p}meta` — Cria uma LC: adiciona à TBR, abre tópico, gera cronograma, "
+            f"calendário visual (imagem) e lembretes diários.\n"
+            f"• `{p}meta Junho \"Quarta Asa - Rebecca Yarros\" dia 7 até cap. 10, dia 14 até cap. 22`\n\n"
+            f"`{p}editmeta` — Corrige metas de uma LC já criada (inclui autor).\n"
+            f"• `{p}editmeta \"Quarta Asa - Rebecca Yarros\" dia 7 até cap. 12, dia 20 fim`\n\n"
+            f"`{p}calendariolc` — Gera imagem do calendário mensal com todas as metas.\n"
+            f"• `{p}calendariolc` · `{p}calendariolc Junho`"
+        ),
+        inline=False,
     )
     embed.add_field(
-        name="📊 Resumos",
-        value="`!resumomes`, `!resumoano`",
-        inline=False
+        name="🏆 Desafios e Leituras",
+        value=(
+            f"`{p}lido` — Regista livro como lido, remove de **todas** as TBR, "
+            f"atualiza A-Z e abre menu de avaliação (0.25 a 5 estrelas).\n"
+            f"• `{p}lido \"Quarta Asa - Rebecca Yarros\"`\n\n"
+            f"`{p}avaliar` — Avalia o último livro lido (0.25 em 0.25).\n"
+            f"• `{p}avaliar 4.5` · `{p}avaliar 3.75`\n\n"
+            f"`{p}desafios` — Painel geral: meta anual, A-Z, avaliações e TBR.\n"
+            f"`{p}alfabeto` — Progresso do desafio A-Z.\n"
+            f"`{p}remalfabeto` — Limpa uma letra do A-Z. · `{p}remalfabeto Q`\n"
+            f"`{p}historico` — Histórico de leituras com género e páginas.\n"
+            f"`{p}remlido` — Remove um livro dos lidos."
+        ),
+        inline=False,
     )
     embed.add_field(
-        name="🏆 Desafios",
-        value="`!lido`, botões de avaliação, `!desafios`, `!alfabeto`, `!remalfabeto`, `!historico`, `!avaliar`, `!remlido`",
-        inline=False
+        name="✨ Recomendações",
+        value=(
+            f"`{p}recomendar` — Gera 3 sugestões com base nos livros avaliados com **4⭐ ou mais** "
+            f"(pt-PT ou inglês), com ficha técnica, capa e botões para TBR.\n\n"
+            f"**Botão** `✅ Já vi estas sugestões` — Arquiva para não voltarem a aparecer.\n\n"
+            f"`{p}marcarsugestoes` — Arquiva sugestões manualmente.\n"
+            f"• `{p}marcarsugestoes Livro A - Autor | Livro B - Autor`"
+        ),
+        inline=False,
     )
     embed.add_field(
         name="📸 Bookstagram",
-        value="`!recomendar`, `!review`, `!gerar`, `!trend`, `!vibe`",
-        inline=False
+        value=(
+            f"`{p}review` — Ativa modo bloco de notas para uma review.\n"
+            f"Escreve rants, opiniões ou anexa **prints de mensagens** (imagens).\n\n"
+            f"`{p}gerar` — Gera a legenda final da review com IA.\n"
+            f"`{p}trend` — Ideias de posts/reels. · `{p}trend \"Livro - Autor\"`\n"
+            f"`{p}vibe` — Moodboard estético para fotos. · `{p}vibe \"Livro - Autor\"`"
+        ),
+        inline=False,
     )
     embed.add_field(
-        name="✨ Extras",
-        value="`!entrevista`, `!ressaca`, `!teoria`, `!sprint`",
-        inline=False
+        name="📊 Resumos e Estatísticas",
+        value=(
+            f"`{p}resumomes` — Gráfico do mês: livros, páginas, autores e géneros.\n"
+            f"• `{p}resumomes` · `{p}resumomes Junho`\n\n"
+            f"`{p}resumoano` — Apresentação visual anual: autor mais lido, páginas e géneros.\n"
+            f"• `{p}resumoano` · `{p}resumoano 2026`\n\n"
+            "_Resumos automáticos: dia 1 (mês anterior) e 2 de janeiro (ano anterior)._"
+        ),
+        inline=False,
     )
-    embed.set_footer(text=f"Prefixo atual: {COMMAND_PREFIX}")
+    embed.add_field(
+        name="🎲 Extras",
+        value=(
+            f"`{p}entrevista` — Entrevista uma personagem fictícia.\n"
+            f"• `{p}entrevista Rhysanda O que pensas da Feyre?`\n\n"
+            f"`{p}ressaca` — Sugestões para ressaca literária.\n"
+            f"`{p}teoria` — Reage à tua teoria sem spoilers.\n"
+            f"`{p}sprint` — Sprint de leitura com temporizador. · `{p}sprint 25`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="☁️ Nuvem",
+        value=f"`{p}dadosficheiro` · `{p}armazenamento`",
+        inline=False,
+    )
+    embed.set_footer(text=f"Prefixo atual: {COMMAND_PREFIX} · Usa {COMMAND_PREFIX}guia para rever este painel")
     await ctx.send(embed=embed)
 
 
@@ -968,35 +1485,49 @@ async def enviar_guia(ctx: commands.Context):
 # COMANDO: RECOMENDAR
 # ==============================================================================
 
-@bot.command(name="recomendar", help="Gera sugestões literárias com ficha técnica e botões para TBR.")
+@bot.command(name="recomendar", help="Sugere livros com base nos teus lidos avaliados com 4⭐ ou mais.")
 async def curadoria_inteligente(ctx: commands.Context):
     guild = ctx.guild
     if not guild:
         return await ctx.send("❌ Este comando só pode ser usado dentro de um servidor.")
 
+    favoritos = livros_bem_avaliados(minimo=4.0)
+    if not favoritos:
+        return await ctx.send(
+            "📭 Ainda não tens livros avaliados com **4 estrelas ou mais**.\n"
+            "Regista leituras com `!lido \"Título - Autor\"` e avalia com o menu de estrelas ou `!avaliar 4.5`."
+        )
+
     nome_canal_sugestoes = "sugestoes-leitura"
     canal_sugestoes = await garantir_canal(guild, nome_canal_sugestoes)
 
-    await ctx.send(f"🔍 A preparar sugestões em {canal_sugestoes.mention}...")
+    await ctx.send(
+        f"🔍 A preparar sugestões com base em **{len(favoritos)}** livro(s) bem avaliado(s) "
+        f"em {canal_sugestoes.mention}..."
+    )
 
-    livros_lidos = dados["livros_lidos"]
-    favoritos = [
-        l.get("titulo", "")
-        for l in livros_lidos
-        if l.get("titulo") and (l.get("nota", 0) >= 4 or l.get("estrelas") in ["⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"])
-    ]
     tbr_atual = livros_tbr_flat()
     vistos = dados.get("sugestoes_vistas", [])
 
-    favs_texto = ", ".join(favoritos) if favoritos else "Romances, Fantasias e Thrillers marcantes"
+    linhas_favoritos = []
+    for livro in favoritos:
+        genero = livro.get("genero", "N/D")
+        linhas_favoritos.append(
+            f"- {livro['titulo']} ({livro['nota']:g}⭐, género: {genero})"
+        )
+    favs_texto = "\n".join(linhas_favoritos)
     tbr_texto = ", ".join(tbr_atual) if tbr_atual else "Nenhum"
     vistos_texto = ", ".join(vistos) if vistos else "Nenhum"
 
     prompt = f"""
 You are a literary curator.
-Base your suggestions on the reader's taste: [{favs_texto}].
-Do NOT suggest books already in this TBR list: [{tbr_texto}].
-Do NOT suggest books already shown and dismissed: [{vistos_texto}].
+The reader loved these books (rated 4 stars or higher). Suggest NEW books with similar tone, genre, pacing and emotional impact:
+{favs_texto}
+
+Rules:
+- Recommend books similar to the highly-rated titles above (authors, subgenres, themes, vibe).
+- Do NOT suggest books already in this TBR list: [{tbr_texto}].
+- Do NOT suggest books already shown and dismissed: [{vistos_texto}].
 
 Write all descriptive text in European Portuguese (pt-PT) OR English — never Brazilian Portuguese.
 
@@ -1025,9 +1556,11 @@ Suggest exactly 3 real books. Always include author and title separately.
         if not livros_sugeridos:
             return await ctx.send("❌ Não consegui gerar sugestões válidas.")
 
+        base_favoritos = "\n".join(f"• {l['titulo']} ({l['nota']:g}⭐)" for l in favoritos)
         await canal_sugestoes.send(
             "✨ **A TUA REVISTA LITERÁRIA PERSONALIZADA** ✨\n"
-            "*Aqui tens o teu radar de novidades e sugestões:*"
+            "*Sugestões baseadas nos teus livros com 4⭐ ou mais:*\n"
+            f"{base_favoritos}"
         )
 
         titulos_botoes = []
@@ -2059,4 +2592,5 @@ async def sprint_leitura(ctx: commands.Context, minutes: int):
 # RUN
 # ==============================================================================
 
-bot.run(DISCORD_TOKEN)
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)
