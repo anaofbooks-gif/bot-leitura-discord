@@ -59,6 +59,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"In Her Own League - Liz Tomforde\"",
+      "autor": "Liz Tomforde\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -89,7 +99,7 @@
     "F": "❌ Vazio",
     "G": "❌ Vazio",
     "H": "\"His & Hers - Alice Feeney\"",
-    "I": "❌ Vazio",
+    "I": "\"In Her Own League - Liz Tomforde\"",
     "J": "❌ Vazio",
     "K": "❌ Vazio",
     "L": "❌ Vazio",
