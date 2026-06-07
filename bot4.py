@@ -834,7 +834,8 @@ def desenhar_calendario_leituras(mes: str, ano: int) -> io.BytesIO:
     largura, altura = 1400, 1000
     margem = 60
     topo = 150
-    largura_celula = (largura - margem * 2) // 7    altura_celula = 115
+    largura_celula = (largura - margem * 2) // 7
+    altura_celula = 115
 
     imagem = Image.new("RGB", (largura, altura), "#fff8f1")
     draw = ImageDraw.Draw(imagem)
