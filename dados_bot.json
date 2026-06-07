@@ -9,6 +9,16 @@
       "paginas": 0,
       "data_leitura": "07/06/2026",
       "fonte_metadados": "IA"
+    },
+    {
+      "titulo": "\"Não Devia Ser Assim - Amy Lea\"",
+      "autor": "Amy Lea\"",
+      "estrelas": "Sem avaliação",
+      "nota": 0.0,
+      "genero": "N/D",
+      "paginas": 0,
+      "data_leitura": "07/06/2026",
+      "fonte_metadados": "IA"
     }
   ],
   "review_em_andamento": {},
@@ -44,7 +54,7 @@
     "K": "❌ Vazio",
     "L": "❌ Vazio",
     "M": "❌ Vazio",
-    "N": "❌ Vazio",
+    "N": "\"Não Devia Ser Assim - Amy Lea\"",
     "O": "❌ Vazio",
     "P": "❌ Vazio",
     "Q": "❌ Vazio",
