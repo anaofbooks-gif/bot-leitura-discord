@@ -242,6 +242,46 @@
       "thread_id": 1513420143240413244,
       "avisado": false,
       "tipo": "lc"
+    },
+    {
+      "data": "01/06/2026",
+      "livro": "Castelo de Cartas - Anabela Lopes",
+      "meta": "Iniciar/concluir leitura de Castelo de Cartas - Anabela Lopes",
+      "canal_id": 1490497578402451610,
+      "avisado": false,
+      "tipo": "sorteio_tbr"
+    },
+    {
+      "data": "05/06/2026",
+      "livro": "A Filha Perfeita - Lucinda Berry",
+      "meta": "Iniciar/concluir leitura de A Filha Perfeita - Lucinda Berry",
+      "canal_id": 1490497578402451610,
+      "avisado": false,
+      "tipo": "sorteio_tbr"
+    },
+    {
+      "data": "11/06/2026",
+      "livro": "Tempestades e Segredos - Claire Kingsley",
+      "meta": "Iniciar/concluir leitura de Tempestades e Segredos - Claire Kingsley",
+      "canal_id": 1490497578402451610,
+      "avisado": false,
+      "tipo": "sorteio_tbr"
+    },
+    {
+      "data": "17/06/2026",
+      "livro": "Shacking Up - Helena Hunting",
+      "meta": "Iniciar/concluir leitura de Shacking Up - Helena Hunting",
+      "canal_id": 1490497578402451610,
+      "avisado": false,
+      "tipo": "sorteio_tbr"
+    },
+    {
+      "data": "23/06/2026",
+      "livro": "First Time Caller - BK Borrison",
+      "meta": "Iniciar/concluir leitura de First Time Caller - BK Borrison",
+      "canal_id": 1490497578402451610,
+      "avisado": false,
+      "tipo": "sorteio_tbr"
     }
   ],
   "sugestoes_vistas": [
