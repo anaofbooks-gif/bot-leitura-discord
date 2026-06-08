@@ -255,7 +255,20 @@
     "None of This is True - Lisa Jewell",
     "Legends & Lattes - Travis Baldree"
   ],
-  "sorteios_mes": {},
+  "sorteios_mes": {
+    "Junho": {
+      "livros": [
+        "Castelo de Cartas - Anabela Lopes",
+        "A Filha Perfeita - Lucinda Berry",
+        "Tempestades e Segredos - Claire Kingsley",
+        "Shacking Up - Helena Hunting",
+        "First Time Caller - BK Borrison"
+      ],
+      "lidos": [],
+      "data_sorteio": "08/06/2026",
+      "ano": 2026
+    }
+  },
   "tbr_por_mes": {
     "Geral": [
       "The Air He Breathes - Brittainy C. Cherry",
