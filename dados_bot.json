@@ -242,6 +242,16 @@
       "thread_id": 1513321825592152064,
       "avisado": false,
       "tipo": "lc"
+    },
+    {
+      "data": "30/06/2026",
+      "livro": "Tempestades e Segredos - Claire Kingsley",
+      "autor": "Claire Kingsley",
+      "meta": "Terminar o livro",
+      "canal_id": 1513420143240413244,
+      "thread_id": 1513420143240413244,
+      "avisado": false,
+      "tipo": "lc"
     }
   ],
   "sugestoes_vistas": [
