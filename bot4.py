@@ -2356,15 +2356,17 @@ async def ajuda_armazenamento(ctx: commands.Context):
 @bot.command(name="guia", help="Mostra o guia completo de comandos do bot.")
 async def enviar_guia(ctx: commands.Context):
     p = COMMAND_PREFIX
-    embed = discord.Embed(
-        title="📖 GUIA DO COSMO",
+    
+    # Embed 1 - Introdução e TBR
+    embed1 = discord.Embed(
+        title="📖 GUIA DO COSMO - Parte 1/4",
         description=(
             "Bot de leituras com TBR, leituras conjuntas, desafios e Bookstagram.\n"
             f"**Formato obrigatório dos livros:** `\"Título - Autor\"`"
         ),
         color=discord.Color.purple(),
     )
-    embed.add_field(
+    embed1.add_field(
         name="📚 TBR e Planeamento",
         value=(
             f"`{p}addtbr` — Adiciona um livro à TBR (deteta séries automaticamente!)\n"
@@ -2373,111 +2375,136 @@ async def enviar_guia(ctx: commands.Context):
             f"`{p}remtbr` — Remove um livro de uma categoria da TBR.\n"
             f"• `{p}remtbr Geral \"Quarta Asa - Rebecca Yarros\"`\n\n"
             f"`{p}verbar` — Mostra toda a TBR organizada por mês (bullet points).\n\n"
-            f"`{p}tbr` — Sorteia a TBR do mês, coloca leituras no calendário e **tranca** "
-            f"até leres todos os livros sorteados.\n"
-            f"• `{p}tbr Junho` · `{p}tbr Junho 3` (3 extras da Geral)\n\n"
+            f"`{p}tbr` — Sorteia a TBR do mês, tranca até ler tudo e cria calendário.\n"
+            f"• `{p}tbr Junho` · `{p}tbr Junho 3`\n\n"
             f"`{p}livroinfo` — Pesquisa metadados (ReadMore/Open Library).\n"
             f"• `{p}livroinfo \"Quarta Asa - Rebecca Yarros\"`"
         ),
         inline=False,
     )
-    embed.add_field(
+    
+    # Embed 2 - Leituras Conjuntas e Desafios
+    embed2 = discord.Embed(
+        title="📖 GUIA DO COSMO - Parte 2/4",
+        color=discord.Color.purple(),
+    )
+    embed2.add_field(
         name="📅 Leituras Conjuntas",
         value=(
-            f"`{p}meta` — Cria uma LC: adiciona à TBR, abre tópico, gera cronograma, "
-            f"calendário visual (imagem) e lembretes diários.\n"
-            f"• `{p}meta Junho \"Quarta Asa - Rebecca Yarros\" dia 7 até cap. 10, dia 14 até cap. 22`\n\n"
-            f"`{p}editmeta` — Corrige metas de uma LC já criada (inclui autor).\n"
-            f"• `{p}editmeta \"Quarta Asa - Rebecca Yarros\" dia 7 até cap. 12, dia 20 fim`\n\n"
-            f"`{p}calendariolc` — Gera imagem do calendário mensal com todas as metas (com temas sazonais!).\n"
-            f"• `{p}calendariolc` · `{p}calendariolc Junho`\n\n"
+            f"`{p}meta` — Cria uma LC: adiciona à TBR, abre tópico, gera cronograma.\n"
+            f"• `{p}meta Junho \"Livro - Autor\" dia 7 até cap. 10`\n\n"
+            f"`{p}editmeta` — Corrige metas de uma LC existente.\n"
+            f"• `{p}editmeta \"Livro - Autor\" dia 7 até cap. 12`\n\n"
+            f"`{p}calendariolc` — Gera imagem do calendário mensal (com temas sazonais!).\n\n"
             f"`{p}removerlc` — Remove um livro de todas as LCs.\n"
             f"• `{p}removerlc \"Título - Autor\"`"
         ),
         inline=False,
     )
-    embed.add_field(
+    embed2.add_field(
         name="🏆 Desafios e Leituras",
         value=(
-            f"`{p}lido` — Regista livro como lido, remove de **todas** as TBR, "
-            f"atualiza A-Z e abre menu de avaliação (0.25 a 5 estrelas).\n"
+            f"`{p}lido` — Regista livro como lido, remove da TBR, atualiza A-Z.\n"
             f"• `{p}lido \"Quarta Asa - Rebecca Yarros\"`\n\n"
-            f"`{p}avaliar` — Avalia o último livro lido (0.25 em 0.25).\n"
-            f"• `{p}avaliar 4.5` · `{p}avaliar 3.75`\n\n"
-            f"`{p}reavaliar` — Reavalia um livro já lido.\n"
+            f"`{p}avaliar` — Avalia o último livro lido.\n"
+            f"• `{p}avaliar 4.5`\n\n"
+            f"`{p}reavaliar` — Reavalia qualquer livro já lido.\n"
             f"• `{p}reavaliar \"Quarta Asa - Rebecca Yarros\" 4.5`\n\n"
             f"`{p}editar` — Edita título e/ou autor de um livro.\n"
-            f"• `{p}editar \"Título Antigo - Autor\" Novo Título - Novo Autor`\n\n"
-            f"`{p}remover` — Remove livro de TODOS os lugares (histórico, TBR, LCs).\n"
+            f"• `{p}editar \"Título Antigo\" Novo Título - Novo Autor`\n\n"
+            f"`{p}remover` — Remove livro de TODOS os lugares.\n"
             f"• `{p}remover \"Título - Autor\"`\n\n"
-            f"`{p}buscar` — Busca livros no histórico por título ou autor.\n"
-            f"• `{p}buscar \"palavra\"`\n\n"
+            f"`{p}buscar` — Busca livros no histórico.\n"
+            f"• `{p}buscar \"palavra\"`"
+        ),
+        inline=False,
+    )
+    
+    # Embed 3 - Desafios (continuação), Recomendações, Bookstagram
+    embed3 = discord.Embed(
+        title="📖 GUIA DO COSMO - Parte 3/4",
+        color=discord.Color.purple(),
+    )
+    embed3.add_field(
+        name="🏆 Desafios (continuação)",
+        value=(
             f"`{p}addletra` — Adiciona letra ao A-Z manualmente.\n"
             f"• `{p}addletra A \"Título - Autor\"`\n\n"
-            f"`{p}desafios` — Painel geral: meta anual, A-Z, avaliações e TBR.\n"
+            f"`{p}desafios` — Painel geral de progresso.\n"
             f"`{p}alfabeto` — Progresso do desafio A-Z.\n"
-            f"`{p}remalfabeto` — Limpa uma letra do A-Z. · `{p}remalfabeto Q`\n"
-            f"`{p}historico` — Histórico de leituras com género e páginas.\n"
+            f"`{p}remalfabeto` — Limpa uma letra do A-Z.\n"
+            f"`{p}historico` — Histórico de leituras (agrupado por ano).\n"
             f"`{p}remlido` — Remove um livro dos lidos.\n"
             f"`{p}autores` — Lista todos os autores registados."
         ),
         inline=False,
     )
-    embed.add_field(
+    embed3.add_field(
         name="✨ Recomendações",
         value=(
-            f"`{p}recomendar` — Gera 3 sugestões com base nos livros avaliados com **4⭐ ou mais** "
-            f"(pt-PT ou inglês), com ficha técnica, capa e botões para TBR.\n\n"
-            f"**Botão** `✅ Já vi estas sugestões` — Arquiva para não voltarem a aparecer.\n\n"
-            f"`{p}marcarsugestoes` — Arquiva sugestões manualmente.\n"
+            f"`{p}recomendar` — Gera 3 sugestões baseadas em livros com 4⭐+.\n\n"
+            f"`{p}marcarsugestoes` — Arquivar sugestões manualmente.\n"
             f"• `{p}marcarsugestoes Livro A - Autor | Livro B - Autor`"
         ),
         inline=False,
     )
-    embed.add_field(
+    embed3.add_field(
         name="📸 Bookstagram & Desabafos",
         value=(
-            f"`{p}desabafar` — Modo para capturar emoções, reações e prints de conversas.\n"
+            f"`{p}desabafar` — Modo para capturar emoções e conversas.\n"
             f"• `{p}desabafar \"Título - Autor\"`\n\n"
-            f"`{p}mencionar` — Adiciona uma mensagem específica à review (responde à mensagem).\n\n"
-            f"`{p}review` — Modo bloco de notas tradicional.\n"
-            f"• `{p}review \"Título - Autor\"`\n\n"
-            f"`{p}gerar` — Gera a legenda final com IA (usa tudo o que capturaste).\n\n"
-            f"`{p}trend` — Ideias de posts/reels. · `{p}trend \"Livro - Autor\"`\n"
-            f"`{p}vibe` — Moodboard estético para fotos. · `{p}vibe \"Livro - Autor\"`"
+            f"`{p}mencionar` — Adiciona mensagem específica à review.\n\n"
+            f"`{p}review` — Modo bloco de notas tradicional.\n\n"
+            f"`{p}gerar` — Gera a legenda final com IA.\n\n"
+            f"`{p}trend` — Ideias de posts/reels.\n"
+            f"`{p}vibe` — Moodboard estético para fotos."
         ),
         inline=False,
     )
-    embed.add_field(
+    
+    # Embed 4 - Resumos, Extras e Nuvem
+    embed4 = discord.Embed(
+        title="📖 GUIA DO COSMO - Parte 4/4",
+        color=discord.Color.purple(),
+    )
+    embed4.add_field(
         name="📊 Resumos e Estatísticas",
         value=(
-            f"`{p}resumomes` — Gráfico **circular** do mês: livros, páginas, autores e géneros.\n"
-            f"• `{p}resumomes` · `{p}resumomes Junho`\n\n"
-            f"`{p}resumoano` — Apresentação visual anual com autor mais lido, páginas e géneros.\n"
-            f"• `{p}resumoano` · `{p}resumoano 2026`\n\n"
-            "_Resumos automáticos: dia 1 (mês anterior) e 2 de janeiro (ano anterior)._\n"
-            "_Calendários com temas sazonais (sol no verão, neve no inverno, etc.)_"
+            f"`{p}resumomes` — Gráfico **circular** do mês.\n"
+            f"• `{p}resumomes Junho`\n\n"
+            f"`{p}resumoano` — Apresentação visual anual.\n"
+            f"• `{p}resumoano 2026`\n\n"
+            "_Resumos automáticos: dia 1 (mês anterior) e 2 de janeiro._\n"
+            "_Calendários com temas sazonais!_"
         ),
         inline=False,
     )
-    embed.add_field(
+    embed4.add_field(
         name="🎲 Extras",
         value=(
             f"`{p}entrevista` — Entrevista uma personagem fictícia.\n"
             f"• `{p}entrevista Rhysanda O que pensas da Feyre?`\n\n"
             f"`{p}ressaca` — Sugestões para ressaca literária.\n"
             f"`{p}teoria` — Reage à tua teoria sem spoilers.\n"
-            f"`{p}sprint` — Sprint de leitura com temporizador. · `{p}sprint 25`"
+            f"`{p}sprint` — Sprint de leitura com temporizador."
         ),
         inline=False,
     )
-    embed.add_field(
+    embed4.add_field(
         name="☁️ Nuvem",
-        value=f"`{p}dadosficheiro` · `{p}armazenamento`",
+        value=(
+            f"`{p}dadosficheiro` — Mostra onde os dados estão guardados.\n"
+            f"`{p}armazenamento` — Explica como configurar persistência na nuvem."
+        ),
         inline=False,
     )
-    embed.set_footer(text=f"Prefixo atual: {COMMAND_PREFIX} · Usa {COMMAND_PREFIX}guia para rever este painel")
-    await ctx.send(embed=embed)
+    embed4.set_footer(text=f"Prefixo atual: {COMMAND_PREFIX} · Usa {COMMAND_PREFIX}guia para rever este painel")
+    
+    # Enviar os 4 embeds
+    await ctx.send(embed=embed1)
+    await ctx.send(embed=embed2)
+    await ctx.send(embed=embed3)
+    await ctx.send(embed=embed4)
 
 
 # ==============================================================================
