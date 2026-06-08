@@ -529,11 +529,20 @@ def estrelas_para_nota(estrelas: str) -> float:
         nota += 0.5
     elif "¾" in estrelas:
         nota += 0.75
+    # Tentar extrair nota entre parênteses (ex: " (4.25)")
+    match = re.search(r'\((\d+\.?\d*)\)', estrelas)
+    if match:
+        nota = float(match.group(1))
     return float(nota)
 
 
 def nota_valida(nota: float) -> bool:
-    return nota in NOTAS_DISPONIVEIS
+    # Verificar se está dentro do range e se é múltiplo de 0.25
+    if nota < 0.25 or nota > 5:
+        return False
+    # Arredondar para evitar problemas de precisão
+    resto = round(nota * 4) % 4
+    return resto == 0
 
 
 def livro_ja_lido(titulo_completo: str) -> bool:
@@ -549,14 +558,24 @@ def nota_do_livro(livro: Dict[str, Any]) -> float:
 
 
 def livros_bem_avaliados(minimo: float = 4.0) -> List[Dict[str, Any]]:
+    """Retorna livros com avaliação >= minimo (suporta notas fracionadas)."""
     resultado = []
     for livro in dados["livros_lidos"]:
         titulo = str(livro.get("titulo", "")).strip()
         if not titulo:
             continue
-        nota = nota_do_livro(livro)
-        if nota >= minimo:
-            resultado.append({**livro, "nota": nota})
+        
+        # Tentar obter nota numérica
+        nota = livro.get("nota")
+        if isinstance(nota, (int, float)) and nota > 0:
+            nota_valor = float(nota)
+        else:
+            # Extrair de estrelas (ex: "⭐⭐⭐⭐¼" = 4.25)
+            estrelas = livro.get("estrelas", "")
+            nota_valor = estrelas_para_nota(estrelas)
+        
+        if nota_valor >= minimo:
+            resultado.append({**livro, "nota": nota_valor})
     return resultado
 
 
@@ -1351,7 +1370,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
             "lido": "`!lido Nome do Livro`",
             "remalfabeto": "`!remalfabeto A`",
             "addletra": '`!addletra A "Título - Autor"`',
-            "avaliar": "`!avaliar 3.5` (aceita 0.25 em 0.25 até 5)",
+            "avaliar": "`!avaliar 4.5` ou `!avaliar 4.5 \"Título - Autor\"`",
             "reavaliar": '`!reavaliar "Título - Autor" 4.5`',
             "editar": '`!editar "Título Antigo" Novo Título - Novo Autor`',
             "remover": '`!remover "Título - Autor"`',
@@ -2144,8 +2163,65 @@ async def reavaliar_livro(ctx: commands.Context, *, argumentos: str):
 
 
 # ==============================================================================
-# COMANDOS DE REVIEW E DESABAFO
+# COMANDO: AVALIAR (CORRIGIDO)
 # ==============================================================================
+
+@bot.command(name="avaliar", help="Avalia um livro específico ou o último lido. Ex: !avaliar 4.5 \"Título - Autor\" ou !avaliar 4.5")
+async def avaliar_livro(ctx: commands.Context, nota: str, *, titulo_livro: Optional[str] = None):
+    """
+    Avalia um livro. Se título não for fornecido, avalia o último lido.
+    Nota deve ser entre 0.25 e 5, em passos de 0.25.
+    """
+    # Converter nota para float de forma segura
+    try:
+        nota_limpa = nota.replace(',', '.')
+        nota_float = float(nota_limpa)
+    except ValueError:
+        return await ctx.send("❌ Nota inválida. Exemplo: `4.5` ou `3.75`")
+    
+    if not nota_valida(nota_float):
+        return await ctx.send("❌ A nota deve ser entre 0.25 e 5, em passos de 0.25.")
+    
+    # Se título foi fornecido, procurar o livro
+    livro_encontrado = None
+    if titulo_livro:
+        try:
+            titulo_completo = livro_completo(titulo_livro)
+        except ValueError:
+            titulo_completo = titulo_livro.strip()
+        
+        for livro in dados["livros_lidos"]:
+            if livro.get("titulo", "").lower().strip() == titulo_completo.lower().strip():
+                livro_encontrado = livro
+                break
+        
+        if not livro_encontrado:
+            return await ctx.send(f"❌ Não encontrei o livro **{titulo_livro}** no histórico.")
+    else:
+        # Avaliar o último livro lido
+        if not dados["livros_lidos"]:
+            return await ctx.send("❌ Ainda não registaste nenhum livro lido para avaliar.")
+        livro_encontrado = dados["livros_lidos"][-1]
+    
+    # Guardar avaliação
+    nota_antiga = livro_encontrado.get("nota", 0.0)
+    estrelas_antigas = livro_encontrado.get("estrelas", "Sem avaliação")
+    
+    livro_encontrado["nota"] = nota_float
+    livro_encontrado["estrelas"] = estrelas_para_texto(nota_float)
+    guardar_dados()
+    
+    titulo_livro_nome = livro_encontrado.get("titulo", "Livro")
+    
+    await ctx.send(
+        f"🎨 **Avaliação guardada!**\n"
+        f"📖 {titulo_livro_nome}\n"
+        f"⭐ Antiga: {estrelas_antigas} → ⭐ Nova: {livro_encontrado['estrelas']}"
+    )
+
+
+# ==============================================================================
+# COMANDOS DE REVIEW E DESABAFO# ==============================================================================
 
 @bot.command(name="desabafar", help="Regista emoções, reações e conversas sobre um livro para a review. Ex: !desabafar \"Título - Autor\"")
 async def iniciar_desabafo(ctx: commands.Context, *, titulo_livro: str):
@@ -2301,57 +2377,8 @@ async def iniciar_review(ctx: commands.Context, *, titulo_livro: str):
 
 
 # ==============================================================================
-# COMANDO: GUIA
+# COMANDO: GUIA (PARTIDO EM 4 EMBEDS)
 # ==============================================================================
-
-@bot.command(name="dadosficheiro", help="Mostra onde os dados do bot são guardados.")
-async def mostrar_dados_ficheiro(ctx: commands.Context):
-    await ctx.send(f"💾 **Persistência do bot**\n{resumo_persistencia()}")
-
-
-@bot.command(name="armazenamento", help="Explica como persistir dados na nuvem.")
-async def ajuda_armazenamento(ctx: commands.Context):
-    embed = discord.Embed(
-        title="☁️ Armazenamento na nuvem",
-        description=(
-            "Se o bot corre em **Render, Railway, Fly.io**, etc., o disco é **temporário** — "
-            "a TBR apaga-se a cada reinício. Usa armazenamento remoto:"
-        ),
-        color=discord.Color.blue(),
-    )
-    embed.add_field(
-        name="Opção 1 — GitHub (ideal se o bot já está no GitHub)",
-        value=(
-            "1. GitHub → Settings → Developer settings → Personal access tokens\n"
-            "2. Cria token com permissão **Contents** (read/write) no repositório\n"
-            "3. Opcional: adiciona `dados_bot.json` ao repo (pode começar vazio `{}`)\n"
-            "4. Nas variáveis da nuvem:\n"
-            "`GITHUB_TOKEN` → o token\n"
-            "`GITHUB_REPO` → `utilizador/nome-do-repo`\n"
-            "Opcional: `GITHUB_BRANCH` (default `main`), `GITHUB_DATA_PATH` (default `dados_bot.json`)"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Opção 2 — Supabase",
-        value=(
-            "1. Projeto em [supabase.com](https://supabase.com) + tabela `bot_state`\n"
-            "2. Variáveis: `SUPABASE_URL` e `SUPABASE_KEY`"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Opção 3 — JSONBin",
-        value="Variáveis: `JSONBIN_BIN_ID` e `JSONBIN_API_KEY`",
-        inline=False,
-    )
-    embed.add_field(
-        name="Estado atual",
-        value=resumo_persistencia(),
-        inline=False,
-    )
-    await ctx.send(embed=embed)
-
 
 @bot.command(name="guia", help="Mostra o guia completo de comandos do bot.")
 async def enviar_guia(ctx: commands.Context):
@@ -2406,8 +2433,8 @@ async def enviar_guia(ctx: commands.Context):
         value=(
             f"`{p}lido` — Regista livro como lido, remove da TBR, atualiza A-Z.\n"
             f"• `{p}lido \"Quarta Asa - Rebecca Yarros\"`\n\n"
-            f"`{p}avaliar` — Avalia o último livro lido.\n"
-            f"• `{p}avaliar 4.5`\n\n"
+            f"`{p}avaliar` — Avalia um livro (específico ou o último lido).\n"
+            f"• `{p}avaliar 4.5` ou `{p}avaliar 4.5 \"Título - Autor\"`\n\n"
             f"`{p}reavaliar` — Reavalia qualquer livro já lido.\n"
             f"• `{p}reavaliar \"Quarta Asa - Rebecca Yarros\" 4.5`\n\n"
             f"`{p}editar` — Edita título e/ou autor de um livro.\n"
@@ -2979,7 +3006,7 @@ async def enviar_lembretes_pendentes_hoje() -> None:
         guardar_dados()
 
 
-@tasks.loop(minutes=5)
+@tasks.loop(hours=1)  # Corrigido: agora corre de hora em hora
 async def verificar_lembretes_loop():
     await enviar_lembretes_pendentes_hoje()
 
@@ -3396,20 +3423,6 @@ async def remover_do_alfabeto(ctx: commands.Context, letra: str):
     )
 
 
-@bot.command(name="avaliar", help="Avalia o último livro lido (0.25 a 5, de 0.25 em 0.25).")
-async def avaliar_livro(ctx: commands.Context, nota: float):
-    if not dados["livros_lidos"]:
-        return await ctx.send("❌ Ainda não registaste nenhum livro lido para avaliar.")
-
-    if not nota_valida(nota):
-        return await ctx.send("❌ A nota deve ser entre 0.25 e 5, em passos de 0.25.")
-
-    dados["livros_lidos"][-1]["nota"] = nota
-    dados["livros_lidos"][-1]["estrelas"] = estrelas_para_texto(nota)
-    guardar_dados()
-    await ctx.send(f"🎨 Avaliação guardada com sucesso: {dados['livros_lidos'][-1]['estrelas']}")
-
-
 @bot.command(name="remlido")
 async def remover_lido(ctx: commands.Context, *, titulo_livro: str):
     encontrado = None
@@ -3514,6 +3527,55 @@ async def marcar_sugestoes_vistas(ctx: commands.Context, *, titulos: str):
 # ==============================================================================
 # BOOKSTAGRAM / EXTRAS
 # ==============================================================================
+
+@bot.command(name="dadosficheiro", help="Mostra onde os dados do bot são guardados.")
+async def mostrar_dados_ficheiro(ctx: commands.Context):
+    await ctx.send(f"💾 **Persistência do bot**\n{resumo_persistencia()}")
+
+
+@bot.command(name="armazenamento", help="Explica como persistir dados na nuvem.")
+async def ajuda_armazenamento(ctx: commands.Context):
+    embed = discord.Embed(
+        title="☁️ Armazenamento na nuvem",
+        description=(
+            "Se o bot corre em **Render, Railway, Fly.io**, etc., o disco é **temporário** — "
+            "a TBR apaga-se a cada reinício. Usa armazenamento remoto:"
+        ),
+        color=discord.Color.blue(),
+    )
+    embed.add_field(
+        name="Opção 1 — GitHub (ideal se o bot já está no GitHub)",
+        value=(
+            "1. GitHub → Settings → Developer settings → Personal access tokens\n"
+            "2. Cria token com permissão **Contents** (read/write) no repositório\n"
+            "3. Opcional: adiciona `dados_bot.json` ao repo (pode começar vazio `{}`)\n"
+            "4. Nas variáveis da nuvem:\n"
+            "`GITHUB_TOKEN` → o token\n"
+            "`GITHUB_REPO` → `utilizador/nome-do-repo`\n"
+            "Opcional: `GITHUB_BRANCH` (default `main`), `GITHUB_DATA_PATH` (default `dados_bot.json`)"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Opção 2 — Supabase",
+        value=(
+            "1. Projeto em [supabase.com](https://supabase.com) + tabela `bot_state`\n"
+            "2. Variáveis: `SUPABASE_URL` e `SUPABASE_KEY`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Opção 3 — JSONBin",
+        value="Variáveis: `JSONBIN_BIN_ID` e `JSONBIN_API_KEY`",
+        inline=False,
+    )
+    embed.add_field(
+        name="Estado atual",
+        value=resumo_persistencia(),
+        inline=False,
+    )
+    await ctx.send(embed=embed)
+
 
 @bot.command(name="trend", help="Gera ideias de posts ou reels de Bookstagram.")
 async def sugerir_trends_bookstagram(ctx: commands.Context, *, livro_foco: str = None):
