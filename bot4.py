@@ -529,7 +529,6 @@ def estrelas_para_nota(estrelas: str) -> float:
         nota += 0.5
     elif "¾" in estrelas:
         nota += 0.75
-    # Tentar extrair nota entre parênteses (ex: " (4.25)")
     match = re.search(r'\((\d+\.?\d*)\)', estrelas)
     if match:
         nota = float(match.group(1))
@@ -537,10 +536,8 @@ def estrelas_para_nota(estrelas: str) -> float:
 
 
 def nota_valida(nota: float) -> bool:
-    # Verificar se está dentro do range e se é múltiplo de 0.25
     if nota < 0.25 or nota > 5:
         return False
-    # Arredondar para evitar problemas de precisão
     resto = round(nota * 4) % 4
     return resto == 0
 
@@ -558,22 +555,17 @@ def nota_do_livro(livro: Dict[str, Any]) -> float:
 
 
 def livros_bem_avaliados(minimo: float = 4.0) -> List[Dict[str, Any]]:
-    """Retorna livros com avaliação >= minimo (suporta notas fracionadas)."""
     resultado = []
     for livro in dados["livros_lidos"]:
         titulo = str(livro.get("titulo", "")).strip()
         if not titulo:
             continue
-        
-        # Tentar obter nota numérica
         nota = livro.get("nota")
         if isinstance(nota, (int, float)) and nota > 0:
             nota_valor = float(nota)
         else:
-            # Extrair de estrelas (ex: "⭐⭐⭐⭐¼" = 4.25)
             estrelas = livro.get("estrelas", "")
             nota_valor = estrelas_para_nota(estrelas)
-        
         if nota_valor >= minimo:
             resultado.append({**livro, "nota": nota_valor})
     return resultado
@@ -789,6 +781,66 @@ def gemini_json(prompt: str) -> Dict[str, Any]:
     if "{" in texto and "}" in texto:
         texto = texto[texto.find("{"):texto.rfind("}") + 1]
     return json.loads(texto)
+
+
+async def gemini_json_com_retry(prompt: str, tentativas: int = 3, espera: int = 5) -> Dict[str, Any]:
+    """
+    Tenta chamar o Gemini JSON com retry automático em caso de erro 503.
+    """
+    for tentativa in range(tentativas):
+        try:
+            return gemini_json(prompt)
+        except Exception as e:
+            erro_str = str(e)
+            if "503" in erro_str or "UNAVAILABLE" in erro_str or "overloaded" in erro_str.lower():
+                if tentativa < tentativas - 1:
+                    tempo_espera = espera * (tentativa + 1)
+                    print(f"⚠️ Gemini sobrecarregado. Tentativa {tentativa + 2}/{tentativas} em {tempo_espera}s...")
+                    await asyncio.sleep(tempo_espera)
+                    continue
+                else:
+                    print(f"❌ Gemini ainda sobrecarregado após {tentativas} tentativas.")
+                    raise Exception("O serviço de IA está temporariamente sobrecarregado. Tenta novamente daqui a pouco.")
+            else:
+                raise
+    return {}
+
+
+async def extrair_texto_da_imagem(url_imagem: str) -> str:
+    """
+    Usa Gemini Vision para extrair texto de um print/imagem.
+    Retorna o texto encontrado ou string vazia.
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url_imagem) as resp:
+                if resp.status != 200:
+                    print(f"❌ Erro ao baixar imagem: status {resp.status}")
+                    return ""
+                imagem_bytes = await resp.read()
+        
+        from PIL import Image
+        import io
+        
+        imagem = Image.open(io.BytesIO(imagem_bytes))
+        
+        response = ai_client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=[
+                "Extrai TODO o texto visível nesta imagem. É um print de conversa (WhatsApp, Instagram, Discord, Telegram). "
+                "Mantém a formatação de quem disse o quê. Se vires nomes de pessoas, mantém-nos. "
+                "Retorna APENAS o texto, sem comentários adicionais. Se não houver texto legível, retorna 'SEM_TEXTO'.",
+                imagem
+            ]
+        )
+        texto = response.text.strip() if response.text else ""
+        if texto and texto != "SEM_TEXTO":
+            print(f"📸 OCR extraiu {len(texto)} caracteres da imagem")
+            return texto
+        return ""
+    except Exception as e:
+        print(f"❌ Erro ao extrair texto da imagem: {e}")
+        return ""
 
 
 async def enviar_mensagem_longa(canal: discord.abc.Messageable, texto: str, limite: int = 1900) -> None:
@@ -1200,7 +1252,7 @@ Se não for uma série ou não houver sequências conhecidas, responde:
 {{"sequencias": []}}
 """
     try:
-        resposta = gemini_json(prompt)
+        resposta = await gemini_json_com_retry(prompt)
         sequencias = resposta.get("sequencias", [])
         
         if not sequencias:
@@ -1347,12 +1399,18 @@ async def on_message(message: discord.Message):
             texto = message.content.strip()
             if texto:
                 review.setdefault("desabafos", []).append(texto)
+            
             for anexo in message.attachments:
                 if anexo.content_type and anexo.content_type.startswith("image/"):
-                    review.setdefault("anexos", []).append(anexo.url)
-                    review.setdefault("desabafos", []).append(f"[Print de mensagem: {anexo.url}]")
-                else:
-                    review.setdefault("desabafos", []).append(f"[Anexo: {anexo.url}]")
+                    # Tentar extrair texto da imagem
+                    texto_extraido = await extrair_texto_da_imagem(anexo.url)
+                    if texto_extraido:
+                        review.setdefault("conversas", []).append(f"📸 Print: {texto_extraido}")
+                        await message.add_reaction("👁️")
+                    else:
+                        review.setdefault("anexos", []).append(anexo.url)
+                        review.setdefault("desabafos", []).append(f"[Print de mensagem: {anexo.url}]")
+            
             guardar_dados()
             await message.add_reaction("📝")
 
@@ -1642,7 +1700,7 @@ Se não houver sequências ou a série já tiver terminado, responde:
 {{"sequencias": []}}
 """
         try:
-            resposta = gemini_json(prompt)
+            resposta = await gemini_json_com_retry(prompt)
             sequencias = resposta.get("sequencias", [])
             
             if not sequencias:
@@ -2172,7 +2230,6 @@ async def avaliar_livro(ctx: commands.Context, nota: str, *, titulo_livro: Optio
     Avalia um livro. Se título não for fornecido, avalia o último lido.
     Nota deve ser entre 0.25 e 5, em passos de 0.25.
     """
-    # Converter nota para float de forma segura
     try:
         nota_limpa = nota.replace(',', '.')
         nota_float = float(nota_limpa)
@@ -2182,7 +2239,6 @@ async def avaliar_livro(ctx: commands.Context, nota: str, *, titulo_livro: Optio
     if not nota_valida(nota_float):
         return await ctx.send("❌ A nota deve ser entre 0.25 e 5, em passos de 0.25.")
     
-    # Se título foi fornecido, procurar o livro
     livro_encontrado = None
     if titulo_livro:
         try:
@@ -2198,12 +2254,10 @@ async def avaliar_livro(ctx: commands.Context, nota: str, *, titulo_livro: Optio
         if not livro_encontrado:
             return await ctx.send(f"❌ Não encontrei o livro **{titulo_livro}** no histórico.")
     else:
-        # Avaliar o último livro lido
         if not dados["livros_lidos"]:
             return await ctx.send("❌ Ainda não registaste nenhum livro lido para avaliar.")
         livro_encontrado = dados["livros_lidos"][-1]
     
-    # Guardar avaliação
     nota_antiga = livro_encontrado.get("nota", 0.0)
     estrelas_antigas = livro_encontrado.get("estrelas", "Sem avaliação")
     
@@ -2221,7 +2275,8 @@ async def avaliar_livro(ctx: commands.Context, nota: str, *, titulo_livro: Optio
 
 
 # ==============================================================================
-# COMANDOS DE REVIEW E DESABAFO# ==============================================================================
+# COMANDOS DE REVIEW E DESABAFO
+# ==============================================================================
 
 @bot.command(name="desabafar", help="Regista emoções, reações e conversas sobre um livro para a review. Ex: !desabafar \"Título - Autor\"")
 async def iniciar_desabafo(ctx: commands.Context, *, titulo_livro: str):
@@ -2278,7 +2333,11 @@ async def adicionar_mensagem_review(ctx: commands.Context):
     if msg_referencia.attachments:
         for anexo in msg_referencia.attachments:
             if anexo.content_type and anexo.content_type.startswith("image/"):
-                entrada += f"\n   📎 Print: {anexo.url}"
+                texto_extraido = await extrair_texto_da_imagem(anexo.url)
+                if texto_extraido:
+                    entrada += f"\n   📸 Print: {texto_extraido}"
+                else:
+                    entrada += f"\n   📎 Anexo: {anexo.url}"
                 review.setdefault("anexos", []).append(anexo.url)
     
     review.setdefault("conversas", []).append(entrada)
@@ -2336,7 +2395,7 @@ Write only the caption, no extra text.
 """
 
     try:
-        res = gemini_text(prompt)
+        res = await gemini_text_com_retry(prompt)
         
         mensagem_final = f"✨ **LEGENDA PARA O INSTAGRAM PRONTA!** ✨\n\n{res}"
         
@@ -2374,6 +2433,26 @@ async def iniciar_review(ctx: commands.Context, *, titulo_livro: str):
         f"Escreve rants, opiniões ou cola **prints de mensagens** (imagens) em mensagens normais.\n"
         f"Quando terminares, usa `!gerar`."
     )
+
+
+async def gemini_text_com_retry(prompt: str, tentativas: int = 3, espera: int = 5) -> str:
+    """Versão com retry para gemini_text"""
+    for tentativa in range(tentativas):
+        try:
+            return gemini_text(prompt)
+        except Exception as e:
+            erro_str = str(e)
+            if "503" in erro_str or "UNAVAILABLE" in erro_str or "overloaded" in erro_str.lower():
+                if tentativa < tentativas - 1:
+                    tempo_espera = espera * (tentativa + 1)
+                    print(f"⚠️ Gemini sobrecarregado (text). Tentativa {tentativa + 2}/{tentativas} em {tempo_espera}s...")
+                    await asyncio.sleep(tempo_espera)
+                    continue
+                else:
+                    raise Exception("O serviço de IA está temporariamente sobrecarregado. Tenta novamente daqui a pouco.")
+            else:
+                raise
+    return ""
 
 
 # ==============================================================================
@@ -2527,7 +2606,6 @@ async def enviar_guia(ctx: commands.Context):
     )
     embed4.set_footer(text=f"Prefixo atual: {COMMAND_PREFIX} · Usa {COMMAND_PREFIX}guia para rever este painel")
     
-    # Enviar os 4 embeds
     await ctx.send(embed=embed1)
     await ctx.send(embed=embed2)
     await ctx.send(embed=embed3)
@@ -2603,7 +2681,7 @@ Suggest exactly 3 real books. Always include author and title separately.
 """
 
     try:
-        resposta = gemini_json(prompt)
+        resposta = await gemini_json_com_retry(prompt)
         livros_sugeridos = resposta.get("livros", [])
 
         if not livros_sugeridos:
@@ -2927,7 +3005,7 @@ Respond only with valid JSON in this structure:
 """
 
     try:
-        resposta = gemini_json(prompt)
+        resposta = await gemini_json_com_retry(prompt)
         metas = resposta.get("metas", [])
         nota = resposta.get("nota", "")
 
@@ -3006,7 +3084,7 @@ async def enviar_lembretes_pendentes_hoje() -> None:
         guardar_dados()
 
 
-@tasks.loop(hours=1)  # Corrigido: agora corre de hora em hora
+@tasks.loop(hours=1)
 async def verificar_lembretes_loop():
     await enviar_lembretes_pendentes_hoje()
 
@@ -3178,7 +3256,7 @@ JSON only:
 """
 
     try:
-        resposta = gemini_json(prompt)
+        resposta = await gemini_json_com_retry(prompt)
         metas = resposta.get("metas", [])
         nota = resposta.get("nota", "")
 
@@ -3593,7 +3671,7 @@ async def sugerir_trends_bookstagram(ctx: commands.Context, *, livro_foco: str =
     )
 
     try:
-        res = gemini_text(prompt)
+        res = await gemini_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"✨ **TRENDS INSTAGRAM** ✨\n\n{res}")
     except Exception as e:
         await ctx.send(f"❌ Erro ao gerar trends: {e}")
@@ -3610,7 +3688,7 @@ async def entrevistar_personagem(ctx: commands.Context, personagem: str, *, perg
     )
 
     try:
-        res = gemini_text(prompt)
+        res = await gemini_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"**[{personagem}]:** {res}")
     except Exception as e:
         await ctx.send(f"❌ Erro na entrevista: {e}")
@@ -3624,7 +3702,7 @@ async def curar_ressaca(ctx: commands.Context, *, livro_destruidor: str):
     )
 
     try:
-        res = gemini_text(prompt)
+        res = await gemini_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"🩺 **DIAGNÓSTICO PARA RESSACA LITERÁRIA**\n\n{res}")
     except Exception as e:
         await ctx.send(f"❌ Erro ao gerar sugestões: {e}")
@@ -3638,7 +3716,7 @@ async def avaliar_teoria(ctx: commands.Context, *, teoria_leitora: str):
     )
 
     try:
-        res = gemini_text(prompt)
+        res = await gemini_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"💭 **AVALIAÇÃO DA TUA TEORIA:**\n\n{res}")
     except Exception as e:
         await ctx.send(f"❌ Erro ao avaliar teoria: {e}")
@@ -3652,7 +3730,7 @@ async def gerar_estetica(ctx: commands.Context, *, nome_livro: str):
     )
 
     try:
-        res = gemini_text(prompt)
+        res = await gemini_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"📸 **BOOKSTAGRAM MOODBOARD VIBE:**\n\n{res}")
     except Exception as e:
         await ctx.send(f"❌ Erro ao gerar vibe: {e}")
