@@ -191,7 +191,15 @@
       "fonte_metadados": "IA"
     }
   ],
-  "review_em_andamento": {},
+  "review_em_andamento": {
+    "1034584037093810316": {
+      "titulo": "\"Dá-me Uma Razão - A. L. Jackson\"",
+      "desabafos": [],
+      "conversas": [],
+      "anexos": [],
+      "tipo": "desabafo"
+    }
+  },
   "lembretes_metas": [
     {
       "data": "06/06/2026",
