@@ -12,6 +12,8 @@ import textwrap
 import atexit
 import base64
 import math
+import logging
+import hashlib
 from collections import Counter
 from pathlib import Path
 from datetime import datetime
@@ -25,12 +27,27 @@ import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from google import genai
+from pydantic import BaseModel, Field, ValidationError
+from typing import List as ListType, Optional as OptionalType
 
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
     Image = ImageDraw = ImageFont = None
 
+# ==============================================================================
+# LOGGING
+# ==============================================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('cosmo_bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('CosmoBot')
 
 # ==============================================================================
 # CONFIGURAÇÃO
@@ -62,8 +79,6 @@ GITHUB_DATA_PATH = os.getenv("GITHUB_DATA_PATH", "dados_bot.json")
 _github_file_sha: Optional[str] = None
 _ultimo_snapshot: Optional[str] = None
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 VAZIO_ALFABETO = "❌ Vazio"
 
 if not DISCORD_TOKEN:
@@ -81,6 +96,75 @@ MESES_ORDEM = [
 SEPARADOR_LIVRO = " - "
 NOTAS_DISPONIVEIS = [i * 0.25 for i in range(1, 21)]
 READMORE_API_URL = os.getenv("READMORE_API_URL", "https://readmore.onrender.com")
+
+
+# ==============================================================================
+# SCHEMAS PARA VALIDAÇÃO DE RESPOSTAS DA IA
+# ==============================================================================
+
+class MetaLC(BaseModel):
+    """Schema para uma meta de leitura conjunta"""
+    data: str = Field(..., pattern=r'^\d{2}/\d{2}/\d{4}$')
+    texto: str = Field(..., min_length=1, max_length=500)
+
+class RespostaMetas(BaseModel):
+    """Schema para resposta do !meta e !editmeta"""
+    metas: ListType[MetaLC] = Field(default_factory=list)
+    nota: OptionalType[str] = Field(default="", max_length=500)
+
+class LivroRecomendacao(BaseModel):
+    """Schema para um livro recomendado"""
+    titulo: str = Field(..., min_length=1, max_length=200)
+    autor: str = Field(..., min_length=1, max_length=200)
+    data_publicacao: str = Field(default="Desconhecida", max_length=50)
+    genero: str = Field(default="N/D", max_length=100)
+    subgenero: str = Field(default="N/D", max_length=100)
+    porque_ler: str = Field(..., min_length=10, max_length=500)
+    link_capa: str = Field(default="", max_length=500)
+
+class RespostaRecomendacoes(BaseModel):
+    """Schema para resposta do !recomendar"""
+    livros: ListType[LivroRecomendacao] = Field(default_factory=list, max_items=5)
+
+class RespostaSerie(BaseModel):
+    """Schema para deteção de séries"""
+    sequencias: ListType[str] = Field(default_factory=list, max_items=3)
+
+
+# ==============================================================================
+# FUNÇÕES DE SEGURANÇA
+# ==============================================================================
+
+def safe_custom_id(base: str, max_len: int = 100) -> str:
+    """Garante que o custom_id não ultrapassa o limite do Discord (100 caracteres)"""
+    if len(base) <= max_len:
+        return base
+    hash_sufixo = hashlib.md5(base.encode()).hexdigest()[:8]
+    prefixo = base[:max_len - 9]
+    return f"{prefixo}_{hash_sufixo}"
+
+
+def validar_resposta_ia_pydantic(resposta: Dict[str, Any], schema_class) -> Optional[Any]:
+    """Valida uma resposta da IA usando Pydantic."""
+    try:
+        return schema_class(**resposta)
+    except ValidationError as e:
+        logger.warning(f"Validação Pydantic falhou: {e}")
+        return None
+
+
+def validar_resposta_ia(resposta: Dict[str, Any], campos_obrigatorios: List[str]) -> Dict[str, Any]:
+    """Valida se a resposta da IA tem os campos obrigatórios (fallback)."""
+    if not isinstance(resposta, dict):
+        logger.warning(f"Resposta IA não é dicionário: {resposta}")
+        return {}
+    
+    for campo in campos_obrigatorios:
+        if campo not in resposta:
+            logger.warning(f"Campo '{campo}' faltando na resposta IA: {resposta}")
+            return {}
+    
+    return resposta
 
 
 # ==============================================================================
@@ -342,49 +426,49 @@ def carregar_dados() -> Dict[str, Any]:
     if modo == "github":
         try:
             estado = carregar_github()
-            print(f"🐙 Dados carregados do GitHub: {GITHUB_REPO}/{GITHUB_DATA_PATH}")
+            logger.info(f"🐙 Dados carregados do GitHub: {GITHUB_REPO}/{GITHUB_DATA_PATH}")
             return estado
         except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
-            print(f"⚠️ Falha GitHub, a tentar local: {erro}")
+            logger.warning(f"⚠️ Falha GitHub, a tentar local: {erro}")
     elif modo == "supabase":
         try:
             estado = carregar_supabase()
-            print("☁️ Dados carregados do Supabase.")
+            logger.info("☁️ Dados carregados do Supabase.")
             return estado
         except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
-            print(f"⚠️ Falha Supabase, a tentar local: {erro}")
+            logger.warning(f"⚠️ Falha Supabase, a tentar local: {erro}")
     elif modo == "jsonbin":
         try:
             estado = carregar_jsonbin()
-            print("☁️ Dados carregados do JSONBin.")
+            logger.info("☁️ Dados carregados do JSONBin.")
             return estado
         except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
-            print(f"⚠️ Falha JSONBin, a tentar local: {erro}")
+            logger.warning(f"⚠️ Falha JSONBin, a tentar local: {erro}")
     elif modo == "url":
         try:
             estado = carregar_url()
-            print(f"☁️ Dados carregados de: {BOT_DATA_URL}")
+            logger.info(f"☁️ Dados carregados de: {BOT_DATA_URL}")
             return estado
         except (OSError, urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, ValueError, TypeError) as erro:
-            print(f"⚠️ Falha URL remota, a tentar local: {erro}")
+            logger.warning(f"⚠️ Falha URL remota, a tentar local: {erro}")
 
     for ficheiro in (DATA_FILE, BACKUP_FILE):
         if not ficheiro.exists():
             continue
         try:
             estado = _ler_ficheiro_dados(ficheiro)
-            print(f"📂 Dados carregados de: {ficheiro}")
+            logger.info(f"📂 Dados carregados de: {ficheiro}")
             return estado
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as erro:
-            print(f"⚠️ Falha ao ler {ficheiro}: {erro}")
+            logger.warning(f"⚠️ Falha ao ler {ficheiro}: {erro}")
 
     if em_nuvem() and modo == "local":
-        print(
+        logger.warning(
             "⚠️ ATENÇÃO: Bot na nuvem sem armazenamento remoto. "
             "A TBR perde-se a cada reinício/deploy. Configura GitHub, Supabase ou JSONBin."
         )
     else:
-        print(f"📂 Ficheiro novo — a criar em: {DATA_FILE}")
+        logger.info(f"📂 Ficheiro novo — a criar em: {DATA_FILE}")
     return estado_inicial()
 
 
@@ -425,7 +509,7 @@ def guardar_dados() -> None:
             except OSError as erro:
                 if modo == "local":
                     raise
-                print(f"⚠️ Cache local indisponível: {erro}")
+                logger.warning(f"⚠️ Cache local indisponível: {erro}")
 
         if erro_remoto:
             raise RuntimeError(f"Falha ao guardar no remoto ({modo}): {erro_remoto}") from erro_remoto
@@ -623,7 +707,8 @@ async def pesquisar_open_library(query: str) -> Optional[Dict[str, Any]]:
                 if resp.status != 200:
                     return None
                 payload = await resp.json()
-    except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError):
+    except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+        logger.warning(f"Erro ao pesquisar Open Library: {e}")
         return None
 
     docs = payload.get("docs", [])
@@ -658,7 +743,8 @@ async def pesquisar_readmore(query: str) -> Optional[Dict[str, Any]]:
                         if resp.status != 200:
                             continue
                         payload = await resp.json()
-                except (aiohttp.ClientError, asyncio.TimeoutError):
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning(f"Erro ao pesquisar ReadMore: {e}")
                     continue
 
                 livros = payload if isinstance(payload, list) else payload.get("results", payload.get("books", []))
@@ -674,7 +760,8 @@ async def pesquisar_readmore(query: str) -> Optional[Dict[str, Any]]:
                     "capa": livro.get("cover", livro.get("capa", "")),
                     "fonte": "ReadMore",
                 }
-    except Exception:
+    except Exception as e:
+        logger.error(f"Erro inesperado em pesquisar_readmore: {e}")
         return None
     return None
 
@@ -758,141 +845,175 @@ def este_ano() -> str:
     return datetime.now().strftime("%Y")
 
 
-def extrair_texto_gemini(response: Any) -> str:
-    texto = getattr(response, "text", None)
-    if texto:
-        return texto.strip()
-    return ""
-
-
 # ==============================================================================
-# IA HÍBRIDA: DeepSeek para texto (gratuito), Gemini para visão/OCR e imagens
+# IA HÍBRIDA: Gemini + DeepSeek (fallback)
 # ==============================================================================
 
-def gemini_text(prompt: str) -> str:
-    """Gemini para texto (fallback)"""
-    response = ai_client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt
-    )
-    return extrair_texto_gemini(response)
-
-
-def gemini_json(prompt: str) -> Dict[str, Any]:
-    """Gemini para JSON (fallback)"""
-    response = ai_client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config={"response_mime_type": "application/json"}
-    )
-    texto = extrair_texto_gemini(response)
-    texto = re.sub(r"^```(?:json)?\s*|\s*```$", "", texto.strip(), flags=re.IGNORECASE)
-    if "{" in texto and "}" in texto:
-        texto = texto[texto.find("{"):texto.rfind("}") + 1]
-    return json.loads(texto)
-
-
-def deepseek_text(prompt: str) -> str:
-    """DeepSeek para texto (gratuito, sem limites)"""
-    if not DEEPSEEK_API_KEY:
-        print("⚠️ DeepSeek API key não configurada, usando Gemini como fallback")
-        return gemini_text(prompt)
-    
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7,
-        "max_tokens": 2000
-    }
-    
+async def ai_text_hibrido(prompt: str) -> str:
+    """Tenta gerar texto usando o Gemini; se falhar, recorre ao DeepSeek via API HTTP."""
+    # 1. Tentativa com Gemini
     try:
-        req = urlrequest.Request(DEEPSEEK_API_URL, data=json.dumps(data).encode(), headers=headers, method="POST")
-        with urlrequest.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode())
-            return result["choices"][0]["message"]["content"].strip()
+        response = ai_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config={"system_instruction": "És o Cosmo, um assistente literário erudito, divertido e mágico. Responde em português de Portugal."}
+        )
+        if response.text:
+            return response.text
+    except (json.JSONDecodeError, asyncio.TimeoutError, aiohttp.ClientError) as e:
+        logger.warning(f"Gemini falhou (erro esperado): {e}")
     except Exception as e:
-        print(f"❌ DeepSeek falhou: {e}, usando Gemini como fallback")
-        return gemini_text(prompt)
+        logger.exception(f"Gemini falhou (erro inesperado): {e}")
 
-
-def deepseek_json(prompt: str) -> Dict[str, Any]:
-    """DeepSeek para JSON (gratuito, sem limites)"""
-    if not DEEPSEEK_API_KEY:
-        print("⚠️ DeepSeek API key não configurada, usando Gemini como fallback")
-        return gemini_json(prompt)
-    
-    prompt_json = f"{prompt}\n\nResponda APENAS com JSON válido, sem texto adicional."
-    
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [{"role": "user", "content": prompt_json}],
-        "temperature": 0.3,
-        "max_tokens": 2000
-    }
-    
-    try:
-        req = urlrequest.Request(DEEPSEEK_API_URL, data=json.dumps(data).encode(), headers=headers, method="POST")
-        with urlrequest.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode())
-            texto = result["choices"][0]["message"]["content"].strip()
-            
-            texto = re.sub(r"^```(?:json)?\s*|\s*```$", "", texto.strip(), flags=re.IGNORECASE)
-            if "{" in texto and "}" in texto:
-                texto = texto[texto.find("{"):texto.rfind("}") + 1]
-            return json.loads(texto)
-    except Exception as e:
-        print(f"❌ DeepSeek JSON falhou: {e}, usando Gemini como fallback")
-        return gemini_json(prompt)
-
-
-async def gemini_json_com_retry(prompt: str, tentativas: int = 3, espera: int = 5) -> Dict[str, Any]:
-    """Versão com retry - prioriza DeepSeek!"""
-    for tentativa in range(tentativas):
+    # 2. Fallback para DeepSeek (se configurado)
+    if DEEPSEEK_API_KEY:
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": "És o Cosmo, um assistente literário erudito, divertido e mágico. Responde em português de Portugal."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7
+        }
         try:
-            return deepseek_json(prompt)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload, timeout=15) as resp:
+                    if resp.status == 200:
+                        res_json = await resp.json()
+                        return res_json["choices"][0]["message"]["content"]
+                    else:
+                        logger.error(f"DeepSeek respondeu com status {resp.status}")
+        except (json.JSONDecodeError, asyncio.TimeoutError, aiohttp.ClientError) as e:
+            logger.warning(f"DeepSeek falhou (erro esperado): {e}")
         except Exception as e:
-            erro_str = str(e)
-            if "503" in erro_str or "UNAVAILABLE" in erro_str or "overloaded" in erro_str.lower():
-                if tentativa < tentativas - 1:
-                    tempo_espera = espera * (tentativa + 1)
-                    print(f"⚠️ IA sobrecarregada. Tentativa {tentativa + 2}/{tentativas} em {tempo_espera}s...")
-                    await asyncio.sleep(tempo_espera)
-                    continue
-                else:
-                    raise Exception("O serviço de IA está temporariamente sobrecarregado. Tenta novamente daqui a pouco.")
-            else:
-                raise
+            logger.exception(f"DeepSeek falhou (erro inesperado): {e}")
+            return f"❌ Ambas as inteligências falharam. Erro DeepSeek: {e}"
+    
+    return "❌ Sem resposta da inteligência cósmica (Gemini falhou e DeepSeek não configurado)."
+
+
+async def ai_json_hibrido(prompt: str) -> Dict[str, Any]:
+    """Tenta obter um JSON estruturado usando o Gemini; se falhar, recorre ao DeepSeek."""
+    # 1. Tentativa com Gemini
+    try:
+        response = ai_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "system_instruction": "És um backend automatizado estruturado. Responde estritamente com o objeto JSON pedido, sem markdown, sem texto adicional."
+            }
+        )
+        txt = response.text if response.text else "{}"
+        txt = re.sub(r"^```json\s*", "", txt, flags=re.IGNORECASE)
+        txt = re.sub(r"\s*```$", "", txt, flags=re.IGNORECASE)
+        return json.loads(txt.strip())
+    except json.JSONDecodeError as e:
+        logger.warning(f"Gemini JSON decodificação falhou: {e}")
+    except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+        logger.warning(f"Gemini JSON falhou (erro esperado): {e}")
+    except Exception as e:
+        logger.exception(f"Gemini JSON falhou (erro inesperado): {e}")
+
+    # 2. Fallback para DeepSeek
+    if DEEPSEEK_API_KEY:
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": "És um sistema automatizado. Responde ESTREITAMENTE com um objeto JSON válido, sem markdown, sem explicações, sem texto adicional."},
+                {"role": "user", "content": f"{prompt}\n\nResponde APENAS com JSON válido."}
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload, timeout=15) as resp:
+                    if resp.status == 200:
+                        res_json = await resp.json()
+                        txt = res_json["choices"][0]["message"]["content"]
+                        txt = re.sub(r"^```json\s*", "", txt, flags=re.IGNORECASE)
+                        txt = re.sub(r"\s*```$", "", txt, flags=re.IGNORECASE)
+                        return json.loads(txt.strip())
+                    else:
+                        logger.error(f"DeepSeek JSON respondeu com status {resp.status}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"DeepSeek JSON decodificação falhou: {e}")
+        except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+            logger.warning(f"DeepSeek JSON falhou (erro esperado): {e}")
+        except Exception as e:
+            logger.exception(f"DeepSeek JSON falhou (erro inesperado): {e}")
+            return {}
+    
     return {}
 
 
-async def gemini_text_com_retry(prompt: str, tentativas: int = 3, espera: int = 5) -> str:
-    """Versão com retry - prioriza DeepSeek!"""
+async def ai_text_com_retry(prompt: str, tentativas: int = 3, espera: int = 5) -> str:
+    """Versão com retry para texto - usa IA híbrida"""
     for tentativa in range(tentativas):
         try:
-            return deepseek_text(prompt)
-        except Exception as e:
-            erro_str = str(e)
-            if "503" in erro_str or "UNAVAILABLE" in erro_str or "overloaded" in erro_str.lower():
-                if tentativa < tentativas - 1:
-                    tempo_espera = espera * (tentativa + 1)
-                    print(f"⚠️ IA sobrecarregada. Tentativa {tentativa + 2}/{tentativas} em {tempo_espera}s...")
-                    await asyncio.sleep(tempo_espera)
-                    continue
-                else:
-                    raise Exception("O serviço de IA está temporariamente sobrecarregado. Tenta novamente daqui a pouco.")
+            return await asyncio.wait_for(ai_text_hibrido(prompt), timeout=25)
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout na tentativa {tentativa + 1}/{tentativas}")
+            if tentativa < tentativas - 1:
+                await asyncio.sleep(espera * (tentativa + 1))
+                continue
             else:
-                raise
+                return "❌ A IA demorou demasiado a responder. Tenta novamente."
+        except (json.JSONDecodeError, aiohttp.ClientError) as e:
+            logger.warning(f"Erro esperado na IA: {e}")
+            if tentativa < tentativas - 1:
+                await asyncio.sleep(espera * (tentativa + 1))
+                continue
+            else:
+                return f"❌ Erro na IA: {e}"
+        except Exception as e:
+            logger.exception(f"Erro inesperado na IA: {e}")
+            if tentativa < tentativas - 1:
+                await asyncio.sleep(espera * (tentativa + 1))
+                continue
+            else:
+                return f"❌ Erro inesperado na IA: {e}"
     return ""
+
+
+async def ai_json_com_retry(prompt: str, tentativas: int = 3, espera: int = 5) -> Dict[str, Any]:
+    """Versão com retry e timeout para JSON"""
+    for tentativa in range(tentativas):
+        try:
+            return await asyncio.wait_for(ai_json_hibrido(prompt), timeout=25)
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout JSON na tentativa {tentativa + 1}/{tentativas}")
+            if tentativa < tentativas - 1:
+                await asyncio.sleep(espera * (tentativa + 1))
+                continue
+            else:
+                return {}
+        except (json.JSONDecodeError, aiohttp.ClientError) as e:
+            logger.warning(f"Erro esperado na IA JSON: {e}")
+            if tentativa < tentativas - 1:
+                await asyncio.sleep(espera * (tentativa + 1))
+                continue
+            else:
+                return {}
+        except Exception as e:
+            logger.exception(f"Erro inesperado na IA JSON: {e}")
+            if tentativa < tentativas - 1:
+                await asyncio.sleep(espera * (tentativa + 1))
+                continue
+            else:
+                return {}
+    return {}
 
 
 async def extrair_texto_da_imagem(url_imagem: str) -> str:
@@ -904,7 +1025,7 @@ async def extrair_texto_da_imagem(url_imagem: str) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.get(url_imagem) as resp:
                 if resp.status != 200:
-                    print(f"❌ Erro ao baixar imagem: status {resp.status}")
+                    logger.error(f"Erro ao baixar imagem: status {resp.status}")
                     return ""
                 imagem_bytes = await resp.read()
         
@@ -924,11 +1045,11 @@ async def extrair_texto_da_imagem(url_imagem: str) -> str:
         )
         texto = response.text.strip() if response.text else ""
         if texto and texto != "SEM_TEXTO":
-            print(f"📸 OCR extraiu {len(texto)} caracteres da imagem")
+            logger.info(f"📸 OCR extraiu {len(texto)} caracteres da imagem")
             return texto
         return ""
     except Exception as e:
-        print(f"❌ Erro ao extrair texto da imagem: {e}")
+        logger.error(f"Erro ao extrair texto da imagem: {e}")
         return ""
 
 
@@ -968,11 +1089,11 @@ async def gerar_fundo_calendario(mes: str, ano: int) -> Optional[io.BytesIO]:
         
         for part in response.parts:
             if part.inline_data:
-                print(f"🎨 Fundo IA gerado para {mes}")
+                logger.info(f"🎨 Fundo IA gerado para {mes}")
                 return io.BytesIO(part.inline_data.data)
         return None
     except Exception as e:
-        print(f"❌ Erro ao gerar fundo com IA: {e}")
+        logger.error(f"Erro ao gerar fundo com IA: {e}")
         return None
 
 
@@ -1133,23 +1254,18 @@ def desenhar_calendario_leituras(mes: str, ano: int, imagem_fundo: Optional[io.B
     largura_celula = (largura - margem * 2) // 7
     altura_celula = 115
 
-    # Usar fundo gerado por IA ou fallback para cores sólidas
     if imagem_fundo:
         try:
             imagem = Image.open(imagem_fundo).resize((largura, altura))
             imagem = imagem.convert("RGBA")
-            
-            # Criar overlay semitransparente para melhorar legibilidade
             overlay = Image.new("RGBA", (largura, altura), (255, 255, 255, 180))
             imagem = Image.alpha_composite(imagem, overlay)
             imagem = imagem.convert("RGB")
-            print(f"✨ Usando fundo IA para {mes}")
         except Exception as e:
-            print(f"❌ Erro ao usar fundo IA: {e}, usando fundo sólido")
+            logger.warning(f"Erro ao usar fundo IA: {e}, usando fundo sólido")
             imagem_fundo = None
     
     if not imagem_fundo:
-        # Fallback para cores sólidas
         estacoes = {
             "Janeiro": "#e8f0f8", "Fevereiro": "#f5e6f0",
             "Março": "#e8f5e8", "Abril": "#fff0e0",
@@ -1169,7 +1285,6 @@ def desenhar_calendario_leituras(mes: str, ano: int, imagem_fundo: Optional[io.B
     fonte_meta = carregar_fonte(17)
     fonte_rodape = carregar_fonte(18)
 
-    # Título com sombra
     titulo = f"📚 Leituras conjuntas - {mes} {ano} 📚"
     
     draw.text((margem + 2, 45 + 2), titulo, fill="#000000", font=fonte_titulo)
@@ -1198,7 +1313,6 @@ def desenhar_calendario_leituras(mes: str, ano: int, imagem_fundo: Optional[io.B
             x2 = x1 + largura_celula - 8
             y2 = y1 + altura_celula - 8
             
-            # Fundo do dia semi-transparente
             draw.rounded_rectangle((x1, y1, x2, y2), radius=10, fill=(255, 255, 255, 230), outline="#d7c4b5", width=2)
 
             if not dia:
@@ -1345,7 +1459,7 @@ async def garantir_canal(guild: discord.Guild, nome: str) -> discord.TextChannel
 
 
 # ==============================================================================
-# DETECÇÃO DE SÉRIE (usa DeepSeek)
+# DETECÇÃO DE SÉRIE
 # ==============================================================================
 
 async def detetar_e_agendar_serie(titulo_livro: str, mes_origem: str, canal: discord.abc.Messageable) -> List[str]:
@@ -1358,8 +1472,14 @@ Se não for uma série ou não houver sequências conhecidas, responde:
 {{"sequencias": []}}
 """
     try:
-        resposta = await gemini_json_com_retry(prompt)
-        sequencias = resposta.get("sequencias", [])
+        resposta = await ai_json_com_retry(prompt)
+        # Validação com Pydantic primeiro
+        resposta_validada = validar_resposta_ia_pydantic(resposta, RespostaSerie)
+        if resposta_validada:
+            sequencias = resposta_validada.sequencias
+        else:
+            resposta_validada_fallback = validar_resposta_ia(resposta, ["sequencias"])
+            sequencias = resposta_validada_fallback.get("sequencias", [])
         
         if not sequencias:
             return []
@@ -1385,7 +1505,7 @@ Se não for uma série ou não houver sequências conhecidas, responde:
         return mensagens
         
     except Exception as e:
-        print(f"Erro ao detetar série: {e}")
+        logger.error(f"Erro ao detetar série: {e}")
         return []
 
 
@@ -1439,9 +1559,9 @@ if modo_armazenamento() == "local" and not DATA_FILE.exists():
 def _guardar_ao_sair() -> None:
     try:
         guardar_dados()
-        print(f"💾 Dados guardados ({modo_armazenamento()}).")
+        logger.info(f"💾 Dados guardados ({modo_armazenamento()}).")
     except OSError as erro:
-        print(f"⚠️ Erro ao guardar ao sair: {erro}")
+        logger.error(f"⚠️ Erro ao guardar ao sair: {erro}")
 
 
 atexit.register(_guardar_ao_sair)
@@ -1480,13 +1600,13 @@ async def antes_autosave():
 
 @bot.event
 async def on_ready():
-    print(f"👑 {bot.user} está online.")
-    print(f"💾 {resumo_persistencia().replace('**', '')}")
-    print(f"🤖 IA: DeepSeek para texto (gratuito) | Gemini para OCR e imagens")
+    logger.info(f"👑 {bot.user} está online.")
+    logger.info(f"💾 {resumo_persistencia().replace('**', '')}")
+    logger.info(f"🤖 IA: Gemini com fallback para DeepSeek")
     if DEEPSEEK_API_KEY:
-        print("✅ DeepSeek API configurada com sucesso!")
+        logger.info("✅ DeepSeek API configurada como fallback!")
     else:
-        print("⚠️ DeepSeek API key não configurada. Usando Gemini (limitado a 20/dia)")
+        logger.info("⚠️ DeepSeek API key não configurada. Usando apenas Gemini.")
     
     if not verificar_lembretes_loop.is_running():
         verificar_lembretes_loop.start()
@@ -1557,7 +1677,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
             "teoria": "`!teoria a tua teoria aqui`",
             "vibe": "`!vibe Nome do Livro`",
             "sprint": "`!sprint 25`",
-            "calendariolc": "`!calendariolc Junho` ou `!calendariolc Junho semia` (sem IA)",
+            "calendariolc": "`!calendariolc Junho` ou `!calendariolc Junho semia`",
         }
         nome_comando = ctx.command.name if ctx.command else ""
         exemplo = exemplos.get(nome_comando, f"`{COMMAND_PREFIX}guia`")
@@ -1568,11 +1688,18 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
         await ctx.send("❌ Um dos valores não está no formato certo. Usa `!guia` para ver exemplos.")
         return
 
+    # Erros específicos do Discord
+    if isinstance(error, (discord.Forbidden, discord.NotFound, discord.HTTPException)):
+        logger.warning(f"Erro Discord tratado: {error}")
+        await ctx.send("❌ Ocorreu um erro de comunicação com o Discord. Tenta novamente.")
+        return
+
+    logger.exception(f"Erro não tratado no comando {ctx.command}: {error}")
     raise error
 
 
 # ==============================================================================
-# VIEWS E BOTÕES
+# VIEWS E BOTÕES (com safe_custom_id)
 # ==============================================================================
 
 class BotaoSugestao(discord.ui.Button):
@@ -1580,7 +1707,7 @@ class BotaoSugestao(discord.ui.Button):
         super().__init__(
             label=f"➕ TBR: {titulo_livro[:55]}",
             style=discord.ButtonStyle.primary,
-            custom_id=f"tbr_add::{titulo_livro[:80]}",
+            custom_id=safe_custom_id(f"tbr_add::{titulo_livro[:80]}"),
         )
         self.titulo_livro = titulo_livro
 
@@ -1612,7 +1739,7 @@ class BotaoMarcarSugestoes(discord.ui.Button):
         super().__init__(
             label="✅ Já vi estas sugestões",
             style=discord.ButtonStyle.secondary,
-            custom_id=f"sugestoes_vistas::{hash(tuple(titulos)) & 0xFFFFFFFF}",
+            custom_id=safe_custom_id(f"sugestoes_vistas::{hash(tuple(titulos))}"),
         )
         self.titulos = titulos
 
@@ -1663,7 +1790,7 @@ class SelectAvaliacao(discord.ui.Select):
             min_values=1,
             max_values=1,
             options=opcoes,
-            custom_id=f"avaliar::{titulo_livro[:60]}::{autor_id}",
+            custom_id=safe_custom_id(f"avaliar::{titulo_livro[:60]}::{autor_id}"),
         )
         self.titulo_livro = titulo_livro
         self.autor_id = autor_id
@@ -1812,8 +1939,13 @@ Se não houver sequências ou a série já tiver terminado, responde:
 {{"sequencias": []}}
 """
         try:
-            resposta = await gemini_json_com_retry(prompt)
-            sequencias = resposta.get("sequencias", [])
+            resposta = await ai_json_com_retry(prompt)
+            resposta_validada = validar_resposta_ia_pydantic(resposta, RespostaSerie)
+            if resposta_validada:
+                sequencias = resposta_validada.sequencias
+            else:
+                resposta_validada_fallback = validar_resposta_ia(resposta, ["sequencias"])
+                sequencias = resposta_validada_fallback.get("sequencias", [])
             
             if not sequencias:
                 return []
@@ -1846,7 +1978,7 @@ Se não houver sequências ou a série já tiver terminado, responde:
             return mensagens
             
         except Exception as e:
-            print(f"Erro ao detetar série pós-leitura: {e}")
+            logger.error(f"Erro ao detetar série pós-leitura: {e}")
             return []
 
     @discord.ui.button(label="✅ Sim, marcar como lido", style=discord.ButtonStyle.success)
@@ -2503,7 +2635,7 @@ Write only the caption, no extra text.
 """
 
     try:
-        res = await gemini_text_com_retry(prompt)
+        res = await ai_text_com_retry(prompt)
         
         mensagem_final = f"✨ **LEGENDA PARA O INSTAGRAM PRONTA!** ✨\n\n{res}"
         
@@ -2523,6 +2655,7 @@ Write only the caption, no extra text.
         await ctx.send("🎨 Review finalizada! Tudo o que capturaste foi usado. Podes começar uma nova review com `!desabafar` quando quiseres.")
         
     except Exception as e:
+        logger.exception(f"Erro ao gerar review: {e}")
         await ctx.send(f"❌ Erro ao gerar legenda: {e}")
 
 
@@ -2544,7 +2677,7 @@ async def iniciar_review(ctx: commands.Context, *, titulo_livro: str):
 
 
 # ==============================================================================
-# COMANDO: GUIA (VERSÃO RESUMIDA)
+# COMANDO: GUIA
 # ==============================================================================
 
 @bot.command(name="guia", help="Mostra o guia completo de comandos do bot.")
@@ -2556,7 +2689,7 @@ async def enviar_guia(ctx: commands.Context):
         description=(
             "Bot de leituras com TBR, leituras conjuntas, desafios e Bookstagram.\n"
             f"**Formato obrigatório dos livros:** `\"Título - Autor\"`\n\n"
-            f"🤖 **IA Híbrida:** DeepSeek para texto (gratuito) | Gemini para OCR e imagens"
+            f"🤖 **IA Híbrida:** Gemini + DeepSeek (fallback automático)"
         ),
         color=discord.Color.purple(),
     )
@@ -2679,8 +2812,14 @@ Suggest exactly 3 real books. Always include author and title separately.
 """
 
     try:
-        resposta = await gemini_json_com_retry(prompt)
-        livros_sugeridos = resposta.get("livros", [])
+        resposta = await ai_json_com_retry(prompt)
+        # Validação com Pydantic primeiro
+        resposta_validada = validar_resposta_ia_pydantic(resposta, RespostaRecomendacoes)
+        if resposta_validada:
+            livros_sugeridos = [livro.dict() for livro in resposta_validada.livros]
+        else:
+            resposta_validada_fallback = validar_resposta_ia(resposta, ["livros"])
+            livros_sugeridos = resposta_validada_fallback.get("livros", [])
 
         if not livros_sugeridos:
             return await ctx.send("❌ Não consegui gerar sugestões válidas.")
@@ -2734,6 +2873,7 @@ Suggest exactly 3 real books. Always include author and title separately.
         await ctx.send(f"✅ Painel visual gerado com sucesso em {canal_sugestoes.mention}.")
 
     except Exception as e:
+        logger.exception(f"Erro ao processar recomendações: {e}")
         await ctx.send(f"❌ Erro ao processar recomendações: {e}")
 
 
@@ -2895,8 +3035,8 @@ async def sortear_tbr_mes(ctx: commands.Context, mes: str, extras: int = 2):
             imagem = desenhar_calendario_leituras(mes_cap, ano)
             ficheiro = discord.File(imagem, filename=f"tbr-{mes_cap.lower()}-{ano}.png")
             await ctx.send(f"🗓️ Calendário de leituras de **{mes_cap}**:", file=ficheiro)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Erro ao gerar calendário TBR: {e}")
 
 
 @bot.command(name="verbar", help="Mostra toda a TBR organizada por mês (com bullet points).")
@@ -2933,7 +3073,6 @@ async def remover_tbr_mes(ctx: commands.Context, categoria: str, *, livro: str):
     if cat not in dados["tbr_por_mes"]:
         return await ctx.send("❌ Categoria inválida.")
     
-    # Normalizar título para remover caracteres especiais no início
     livro_normalizado = re.sub(r'^[~!@#$%^&*()_+{}\[\]:;<>?/\\|]+\s*', '', livro)
     
     existente = buscar_livro_case_insensitive(dados["tbr_por_mes"][cat], livro_normalizado)
@@ -3056,9 +3195,19 @@ Respond only with valid JSON in this structure:
 """
 
     try:
-        resposta = await gemini_json_com_retry(prompt)
-        metas = resposta.get("metas", [])
-        nota = resposta.get("nota", "")
+        resposta = await ai_json_com_retry(prompt)
+        # Validação com Pydantic primeiro
+        resposta_validada = validar_resposta_ia_pydantic(resposta, RespostaMetas)
+        if resposta_validada:
+            metas = [meta.dict() for meta in resposta_validada.metas]
+            nota = resposta_validada.nota
+        else:
+            resposta_validada_fallback = validar_resposta_ia(resposta, ["metas"])
+            metas = resposta_validada_fallback.get("metas", [])
+            nota = resposta_validada_fallback.get("nota", "")
+
+        if not metas:
+            return await ctx.send("❌ A IA não conseguiu gerar um cronograma válido. Tenta novamente.")
 
         if nota:
             await enviar_mensagem_longa(topico_livro, f"ℹ️ {nota}")
@@ -3090,8 +3239,8 @@ Respond only with valid JSON in this structure:
                 imagem = desenhar_calendario_leituras(mes_cap, int(este_ano()))
                 ficheiro = discord.File(imagem, filename=f"lc-{mes_cap.lower()}-{este_ano()}.png")
                 await topico_livro.send("🗓️ **Calendário visual do mês:**", file=ficheiro)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Erro ao gerar calendário LC: {e}")
 
         await ctx.send(
             f"✅ Metas guardadas com sucesso para {topico_livro.mention}. "
@@ -3100,6 +3249,7 @@ Respond only with valid JSON in this structure:
         )
 
     except Exception as e:
+        logger.exception(f"Erro ao processar metas: {e}")
         await ctx.send(f"❌ Erro ao processar metas: {e}")
 
 
@@ -3128,8 +3278,8 @@ async def enviar_lembretes_pendentes_hoje() -> None:
             )
             lembrete["avisado"] = True
             alterado = True
-        except discord.HTTPException:
-            continue
+        except discord.HTTPException as e:
+            logger.warning(f"Erro ao enviar lembrete: {e}")
 
     if alterado:
         guardar_dados()
@@ -3307,9 +3457,18 @@ JSON only:
 """
 
     try:
-        resposta = await gemini_json_com_retry(prompt)
-        metas = resposta.get("metas", [])
-        nota = resposta.get("nota", "")
+        resposta = await ai_json_com_retry(prompt)
+        resposta_validada = validar_resposta_ia_pydantic(resposta, RespostaMetas)
+        if resposta_validada:
+            metas = [meta.dict() for meta in resposta_validada.metas]
+            nota = resposta_validada.nota
+        else:
+            resposta_validada_fallback = validar_resposta_ia(resposta, ["metas"])
+            metas = resposta_validada_fallback.get("metas", [])
+            nota = resposta_validada_fallback.get("nota", "")
+
+        if not metas:
+            return await ctx.send("❌ A IA não conseguiu gerar um cronograma válido. Tenta novamente.")
 
         canal = await obter_canal_discord(int(canal_id)) if canal_id else ctx.channel
         if canal and nota:
@@ -3340,11 +3499,12 @@ JSON only:
                 imagem = desenhar_calendario_leituras(mes_cap, int(este_ano()))
                 ficheiro = discord.File(imagem, filename=f"lc-edit-{mes_cap.lower()}.png")
                 await ctx.send("🗓️ **Calendário visual atualizado:**", file=ficheiro)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Erro ao gerar calendário editado: {e}")
 
         await ctx.send(f"✅ Metas atualizadas para **{livro_completo_txt}**. Novos lembretes: **{criados}**.")
     except Exception as e:
+        logger.exception(f"Erro ao editar metas: {e}")
         await ctx.send(f"❌ Erro ao editar metas: {e}")
 
 
@@ -3377,6 +3537,7 @@ async def calendario_leituras_conjuntas(ctx: commands.Context, mes: Optional[str
     try:
         imagem = desenhar_calendario_leituras(mes_alvo, ano, imagem_fundo)
     except Exception as e:
+        logger.exception(f"Erro ao criar calendário: {e}")
         return await ctx.send(f"❌ Erro ao criar calendário: {e}")
 
     ficheiro = discord.File(imagem, filename=f"leituras-conjuntas-{mes_alvo.lower()}-{ano}.png")
@@ -3735,9 +3896,10 @@ async def sugerir_trends_bookstagram(ctx: commands.Context, *, livro_foco: str =
     )
 
     try:
-        res = await gemini_text_com_retry(prompt)
+        res = await ai_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"✨ **TRENDS INSTAGRAM** ✨\n\n{res}")
     except Exception as e:
+        logger.exception(f"Erro ao gerar trends: {e}")
         await ctx.send(f"❌ Erro ao gerar trends: {e}")
 
 
@@ -3752,9 +3914,10 @@ async def entrevistar_personagem(ctx: commands.Context, personagem: str, *, perg
     )
 
     try:
-        res = await gemini_text_com_retry(prompt)
+        res = await ai_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"**[{personagem}]:** {res}")
     except Exception as e:
+        logger.exception(f"Erro na entrevista: {e}")
         await ctx.send(f"❌ Erro na entrevista: {e}")
 
 
@@ -3766,9 +3929,10 @@ async def curar_ressaca(ctx: commands.Context, *, livro_destruidor: str):
     )
 
     try:
-        res = await gemini_text_com_retry(prompt)
+        res = await ai_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"🩺 **DIAGNÓSTICO PARA RESSACA LITERÁRIA**\n\n{res}")
     except Exception as e:
+        logger.exception(f"Erro ao gerar sugestões: {e}")
         await ctx.send(f"❌ Erro ao gerar sugestões: {e}")
 
 
@@ -3780,9 +3944,10 @@ async def avaliar_teoria(ctx: commands.Context, *, teoria_leitora: str):
     )
 
     try:
-        res = await gemini_text_com_retry(prompt)
+        res = await ai_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"💭 **AVALIAÇÃO DA TUA TEORIA:**\n\n{res}")
     except Exception as e:
+        logger.exception(f"Erro ao avaliar teoria: {e}")
         await ctx.send(f"❌ Erro ao avaliar teoria: {e}")
 
 
@@ -3794,9 +3959,10 @@ async def gerar_estetica(ctx: commands.Context, *, nome_livro: str):
     )
 
     try:
-        res = await gemini_text_com_retry(prompt)
+        res = await ai_text_com_retry(prompt)
         await enviar_mensagem_longa(ctx, f"📸 **BOOKSTAGRAM MOODBOARD VIBE:**\n\n{res}")
     except Exception as e:
+        logger.exception(f"Erro ao gerar vibe: {e}")
         await ctx.send(f"❌ Erro ao gerar vibe: {e}")
 
 
